@@ -21,6 +21,9 @@ module villa_rwa::villa_dnft {
     const EExceedsProjectLimit: u64 = 9;
     const EExceedsVillaLimit: u64 = 10;
     const EInvalidCommissionRate: u64 = 16;
+    const EInvalidAmount: u64 = 17;
+    const EInvalidPricePerShare: u64 = 17;
+    const EExceedsMaxShares: u64 = 18;
 
     // ===== Capability Objects =====
     struct VILLA_DNFT has drop {}
@@ -224,6 +227,129 @@ module villa_rwa::villa_dnft {
         transfer::share_object(asset_manager_cap);
     }
 
+    // ===== Capability Management =====
+
+    /// Create new AppCap for a specific address (only by AdminCap)
+    public fun create_app_cap_for_address(
+        _admin_cap: &AdminCap,
+        target_address: address,
+        ctx: &mut TxContext
+    ): AppCap {
+        AppCap {
+            id: object::new(ctx),
+            app_address: target_address,
+        }
+    }
+
+    #[allow(lint(custom_state_change))]
+    public fun transfer_app_cap_to_address(
+        _admin_cap: &AdminCap,
+        app_cap: AppCap,
+        recipient: address,
+    ) {
+        transfer::transfer(app_cap, recipient);
+    }
+
+    /// Create shared AppCap that can be used by anyone (only by AdminCap)
+    public fun create_shared_app_cap(
+        _admin_cap: &AdminCap,
+        ctx: &mut TxContext
+    ) {
+        let shared_app_cap = AppCap {
+            id: object::new(ctx),
+            app_address: @0x0, // Special address for shared cap
+        };
+        transfer::share_object(shared_app_cap);
+    }
+
+    /// Create villa project using AdminCap (alternative to AppCap)
+    public fun create_villa_project_with_admin(
+        _admin_cap: &AdminCap,
+        project_id: String,
+        name: String,
+        description: String,
+        max_total_shares: u64,
+        commission_rate: u64,
+        affiliate_rate: u64,
+        clock: &Clock,
+        ctx: &mut TxContext
+    ): VillaProject {
+        assert!(max_total_shares > 0, EInvalidMaxShares);
+        assert!(commission_rate <= 10000, EInvalidCommissionRate);
+        assert!(affiliate_rate <= 10000, EInvalidCommissionRate);
+
+        let project = VillaProject {
+            id: object::new(ctx),
+            project_id,
+            name,
+            description,
+            total_villas: 0,
+            max_total_shares,
+            total_shares_issued: 0,
+            commission_rate,
+            affiliate_rate,
+            created_at: clock::timestamp_ms(clock),
+            updated_at: clock::timestamp_ms(clock),
+        };
+
+        event::emit(VillaProjectCreated {
+            project_id: project.project_id,
+            name: project.name,
+            max_total_shares: project.max_total_shares,
+            created_at: project.created_at,
+        });
+
+        project
+    }
+
+    /// Create villa metadata using AdminCap (alternative to AppCap)
+    public fun create_villa_metadata_with_admin(
+        _admin_cap: &AdminCap,
+        project: &mut VillaProject,
+        villa_id: String,
+        name: String,
+        description: String,
+        location: String,
+        image_url: String,
+        max_shares: u64,
+        price_per_share: u64,
+        clock: &Clock,
+        ctx: &mut TxContext
+    ): VillaMetadata {
+        assert!(max_shares > 0, EInvalidMaxShares);
+        assert!(price_per_share > 0, EInvalidPricePerShare);
+        assert!(project.total_shares_issued + max_shares <= project.max_total_shares, EExceedsMaxShares);
+
+        let metadata = VillaMetadata {
+            id: object::new(ctx),
+            project_id: project.project_id,
+            villa_id,
+            name,
+            description,
+            location,
+            image_url,
+            max_shares,
+            shares_issued: 0,
+            price_per_share,
+            created_at: clock::timestamp_ms(clock),
+            updated_at: clock::timestamp_ms(clock),
+        };
+
+        project.total_villas = project.total_villas + 1;
+        project.total_shares_issued = project.total_shares_issued + max_shares;
+        project.updated_at = clock::timestamp_ms(clock);
+
+        event::emit(VillaMetadataCreated {
+            project_id: project.project_id,
+            villa_id: metadata.villa_id,
+            name: metadata.name,
+            max_shares: metadata.max_shares,
+            created_at: metadata.created_at,
+        });
+
+        metadata
+    }
+
     // ===== Project Management =====
 
     public fun create_villa_project(
@@ -363,6 +489,7 @@ module villa_rwa::villa_dnft {
 
         let shares = vector::empty<VillaShareNFT>();
 
+        // Mint shares one by one
         let i = 0;
         while (i < amount) {
             let share_nft = VillaShareNFT {
@@ -393,6 +520,91 @@ module villa_rwa::villa_dnft {
 
         shares
     }
+
+    /// Mint villa share using AdminCap (alternative to AppCap)
+    public fun mint_villa_share_with_admin(
+        _admin_cap: &AdminCap,
+        project: &mut VillaProject,
+        villa_metadata: &mut VillaMetadata,
+        clock: &Clock,
+        ctx: &mut TxContext
+    ): VillaShareNFT {
+        assert!(villa_metadata.shares_issued < villa_metadata.max_shares, EExceedsVillaLimit);
+        assert!(project.total_shares_issued < project.max_total_shares, EExceedsProjectLimit);
+
+        let share_nft = VillaShareNFT {
+            id: object::new(ctx),
+            project_id: project.project_id,
+            villa_id: villa_metadata.villa_id,
+            owner: tx_context::sender(ctx),
+            affiliate_code: generate_affiliate_code(tx_context::sender(ctx), clock, ctx),
+            is_affiliate_active: true,
+            created_at: clock::timestamp_ms(clock),
+        };
+
+        villa_metadata.shares_issued = villa_metadata.shares_issued + 1;
+        villa_metadata.updated_at = clock::timestamp_ms(clock);
+        project.total_shares_issued = project.total_shares_issued + 1;
+        project.updated_at = clock::timestamp_ms(clock);
+
+        event::emit(VillaSharesMinted {
+            project_id: project.project_id,
+            villa_id: villa_metadata.villa_id,
+            amount: 1,
+            total_shares_issued: villa_metadata.shares_issued,
+            created_at: clock::timestamp_ms(clock),
+        });
+
+        share_nft
+    }
+
+    /// Mint villa shares batch using AdminCap (alternative to AppCap)
+    public fun mint_villa_shares_batch_with_admin(
+        _admin_cap: &AdminCap,
+        project: &mut VillaProject,
+        villa_metadata: &mut VillaMetadata,
+        amount: u64,
+        clock: &Clock,
+        ctx: &mut TxContext
+    ): vector<VillaShareNFT> {
+        assert!(amount > 0, EInvalidAmount);
+        assert!(villa_metadata.shares_issued + amount <= villa_metadata.max_shares, EExceedsVillaLimit);
+        assert!(project.total_shares_issued + amount <= project.max_total_shares, EExceedsProjectLimit);
+
+        let shares = vector::empty<VillaShareNFT>();
+
+        // Mint shares one by one
+        let i = 0;
+        while (i < amount) {
+            let share_nft = VillaShareNFT {
+                id: object::new(ctx),
+                project_id: project.project_id,
+                villa_id: villa_metadata.villa_id,
+                owner: tx_context::sender(ctx),
+                affiliate_code: generate_affiliate_code(tx_context::sender(ctx), clock, ctx),
+                is_affiliate_active: true,
+                created_at: clock::timestamp_ms(clock),
+            };
+            vector::push_back(&mut shares, share_nft);
+            i = i + 1;
+        };
+
+        villa_metadata.shares_issued = villa_metadata.shares_issued + amount;
+        villa_metadata.updated_at = clock::timestamp_ms(clock);
+        project.total_shares_issued = project.total_shares_issued + amount;
+        project.updated_at = clock::timestamp_ms(clock);
+
+        event::emit(VillaSharesMinted {
+            project_id: project.project_id,
+            villa_id: villa_metadata.villa_id,
+            amount,
+            total_shares_issued: villa_metadata.shares_issued,
+            created_at: clock::timestamp_ms(clock),
+        });
+
+        shares
+    }
+
 
     // ===== Marketplace Functions =====
 
@@ -679,6 +891,7 @@ module villa_rwa::villa_dnft {
     }
 
     // ===== Utility Functions =====
+
 
     fun generate_affiliate_code(_owner: address, clock: &Clock, _ctx: &mut TxContext): String {
         let timestamp = clock::timestamp_ms(clock);

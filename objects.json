@@ -1,0 +1,104 @@
+[
+  {
+    "data": {
+      "objectId": "0x3badd39e32159a4ccb065f64dc5632a63cedff1696573cff7d75deb5ed772b77",
+      "version": "349180523",
+      "digest": "7PUnsztapNZvDs7ji3cs3YbVnhNzqvhKsSnkKCVxFqsm",
+      "type": "0x2::package::UpgradeCap",
+      "owner": {
+        "AddressOwner": "0x270ab3ed12382ad9455702771da6b43451ca5417ef2ed4eacbbf40c90976f70b"
+      },
+      "previousTransaction": "FFyUbwN8PPzdmAXUAkyizPiai12uikWgVkR5uHpVEKY1",
+      "storageRebate": "1634000",
+      "content": {
+        "dataType": "moveObject",
+        "type": "0x2::package::UpgradeCap",
+        "hasPublicTransfer": true,
+        "fields": {
+          "id": {
+            "id": "0x3badd39e32159a4ccb065f64dc5632a63cedff1696573cff7d75deb5ed772b77"
+          },
+          "package": "0xda44dd8de52ec31ec5f3a04b4e9be710956ea41f198ea4d770538226181a36de",
+          "policy": 0,
+          "version": "1"
+        }
+      }
+    }
+  },
+  {
+    "data": {
+      "objectId": "0x45eed4683c5d4a021114ed156e17f7c646c7de70d760f697614ad188fd95f678",
+      "version": "349180525",
+      "digest": "6v6akkLRHQ4HjjF2FVJiH4TbMnFgsZVv8WD4ENgkhnvZ",
+      "type": "0x2::package::UpgradeCap",
+      "owner": {
+        "AddressOwner": "0x270ab3ed12382ad9455702771da6b43451ca5417ef2ed4eacbbf40c90976f70b"
+      },
+      "previousTransaction": "AknZvgfz5DH298xqsXcingFpq8nGxMmvfDLCTBYifGYj",
+      "storageRebate": "1634000",
+      "content": {
+        "dataType": "moveObject",
+        "type": "0x2::package::UpgradeCap",
+        "hasPublicTransfer": true,
+        "fields": {
+          "id": {
+            "id": "0x45eed4683c5d4a021114ed156e17f7c646c7de70d760f697614ad188fd95f678"
+          },
+          "package": "0x9924594117398770d768ac11738e0b35faa19b5e27ef9ff38e2ab7bec52a66bb",
+          "policy": 0,
+          "version": "1"
+        }
+      }
+    }
+  },
+  {
+    "data": {
+      "objectId": "0x8289e2a3dd86be2144a7da5a72a76e5305c14fd2e9065985e91e712d481fdef6",
+      "version": "349180524",
+      "digest": "9UQvMx8FW1XcwcneCGTrwirtjKx8NTWqkfdKqwLQLCpD",
+      "type": "0x2::package::UpgradeCap",
+      "owner": {
+        "AddressOwner": "0x270ab3ed12382ad9455702771da6b43451ca5417ef2ed4eacbbf40c90976f70b"
+      },
+      "previousTransaction": "9J4oBWB8KbAD43cmndTtbSX7WWtsJq7RvpQVE7WSNzmW",
+      "storageRebate": "1634000",
+      "content": {
+        "dataType": "moveObject",
+        "type": "0x2::package::UpgradeCap",
+        "hasPublicTransfer": true,
+        "fields": {
+          "id": {
+            "id": "0x8289e2a3dd86be2144a7da5a72a76e5305c14fd2e9065985e91e712d481fdef6"
+          },
+          "package": "0x4cee5970921dc0d20420470fead31bf3c8f078504602b1d9e0e3483b01a1b86e",
+          "policy": 0,
+          "version": "1"
+        }
+      }
+    }
+  },
+  {
+    "data": {
+      "objectId": "0x8abac4d1ea3f318acc40b99b10955df603c66db90cd223ce2a33d55c16847677",
+      "version": "349180527",
+      "digest": "6o2PxirkWNUwJVeNa9L9trxqsbfNYVySXHZyzgeuobzf",
+      "type": "0x2::coin::Coin<0x2::sui::SUI>",
+      "owner": {
+        "AddressOwner": "0x270ab3ed12382ad9455702771da6b43451ca5417ef2ed4eacbbf40c90976f70b"
+      },
+      "previousTransaction": "7A3bP6fDRSvkRRC3GFrBuWw2E9uhWYqyrkgHbgc2Vvmg",
+      "storageRebate": "988000",
+      "content": {
+        "dataType": "moveObject",
+        "type": "0x2::coin::Coin<0x2::sui::SUI>",
+        "hasPublicTransfer": true,
+        "fields": {
+          "balance": "85213800",
+          "id": {
+            "id": "0x8abac4d1ea3f318acc40b99b10955df603c66db90cd223ce2a33d55c16847677"
+          }
+        }
+      }
+    }
+  }
+]
