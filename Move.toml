@@ -1,6 +1,7 @@
 [package]
 name = "villa_rwa"
 version = "0.0.1"
+published-at = "0xcf926c3d3e36247975ab301634269636811ce2c236b7c3e91a21ef17e01edf9d"
 
 [dependencies]
 Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "testnet-v1.18.0" }
