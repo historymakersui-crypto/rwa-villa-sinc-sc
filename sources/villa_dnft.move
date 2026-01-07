@@ -1,5 +1,5 @@
 /// Villa RWA Dynamic NFT Implementation for Sui
-/// Final working implementation without villa status (handled off-chain)
+/// Final working implementation
 module villa_rwa::villa_dnft {
     use sui::object::{Self, UID, ID};
     use sui::transfer as sui_transfer;
