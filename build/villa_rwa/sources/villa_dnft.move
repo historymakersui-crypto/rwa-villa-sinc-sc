@@ -24,6 +24,11 @@ module villa_rwa::villa_dnft {
     const EInvalidAmount: u64 = 17;
     const EInvalidPricePerShare: u64 = 17;
     const EExceedsMaxShares: u64 = 18;
+    // Marketplace error codes
+    const ENotListed: u64 = 19;
+    const EAlreadyListed: u64 = 20;
+    const EInvalidListingPrice: u64 = 21;
+    const ENotOwner: u64 = 22;
 
     // ===== Capability Objects =====
     struct VILLA_DNFT has drop {}
@@ -82,6 +87,13 @@ module villa_rwa::villa_dnft {
         affiliate_code: String,
         is_affiliate_active: bool,
         created_at: u64,
+        // Marketplace metadata fields
+        name: String,
+        description: String,
+        image_url: String,
+        price: u64,
+        is_listed: bool,
+        listing_price: u64,
     }
 
     struct DNFTListing has key, store {
@@ -171,6 +183,11 @@ module villa_rwa::villa_dnft {
         amount: u64,
         total_shares_issued: u64,
         created_at: u64,
+        // Marketplace metadata
+        nft_name: String,
+        nft_description: String,
+        nft_image_url: String,
+        nft_price: u64,
     }
 
     struct DNFTListed has copy, drop {
@@ -199,6 +216,34 @@ module villa_rwa::villa_dnft {
     struct CommissionPaid has copy, drop {
         recipient: address,
         amount: u64,
+        timestamp: u64,
+    }
+
+    // Marketplace events
+    struct NFTListed has copy, drop {
+        nft_id: ID,
+        owner: address,
+        price: u64,
+        timestamp: u64,
+    }
+
+    struct NFTDelisted has copy, drop {
+        nft_id: ID,
+        owner: address,
+        timestamp: u64,
+    }
+
+    struct NFTTransferred has copy, drop {
+        nft_id: ID,
+        from: address,
+        to: address,
+        timestamp: u64,
+    }
+
+    struct PriceUpdated has copy, drop {
+        nft_id: ID,
+        old_price: u64,
+        new_price: u64,
         timestamp: u64,
     }
 
@@ -457,6 +502,13 @@ module villa_rwa::villa_dnft {
             affiliate_code: generate_affiliate_code(tx_context::sender(ctx), clock, ctx),
             is_affiliate_active: true,
             created_at: clock::timestamp_ms(clock),
+            // Marketplace metadata
+            name: string::utf8(b"Villa Share NFT"),
+            description: string::utf8(b"Fractional ownership of luxury villa"),
+            image_url: string::utf8(b"https://example.com/villa-share-nft.png"),
+            price: villa_metadata.price_per_share,
+            is_listed: false,
+            listing_price: 0,
         };
 
         villa_metadata.shares_issued = villa_metadata.shares_issued + 1;
@@ -470,6 +522,11 @@ module villa_rwa::villa_dnft {
             amount: 1,
             total_shares_issued: villa_metadata.shares_issued,
             created_at: clock::timestamp_ms(clock),
+            // Marketplace metadata
+            nft_name: string::utf8(b"Villa Share NFT"),
+            nft_description: string::utf8(b"Fractional ownership of luxury villa"),
+            nft_image_url: string::utf8(b"https://example.com/villa-share-nft.png"),
+            nft_price: villa_metadata.price_per_share,
         });
 
         share_nft
@@ -500,6 +557,13 @@ module villa_rwa::villa_dnft {
                 affiliate_code: generate_affiliate_code(tx_context::sender(ctx), clock, ctx),
                 is_affiliate_active: true,
                 created_at: clock::timestamp_ms(clock),
+                // Marketplace metadata
+                name: string::utf8(b"Villa Share NFT"),
+                description: string::utf8(b"Fractional ownership of luxury villa"),
+                image_url: string::utf8(b"https://example.com/villa-share-nft.png"),
+                price: villa_metadata.price_per_share,
+                is_listed: false,
+                listing_price: 0,
             };
             vector::push_back(&mut shares, share_nft);
             i = i + 1;
@@ -516,6 +580,11 @@ module villa_rwa::villa_dnft {
             amount,
             total_shares_issued: villa_metadata.shares_issued,
             created_at: clock::timestamp_ms(clock),
+            // Marketplace metadata
+            nft_name: string::utf8(b"Villa Share NFT"),
+            nft_description: string::utf8(b"Fractional ownership of luxury villa"),
+            nft_image_url: string::utf8(b"https://example.com/villa-share-nft.png"),
+            nft_price: villa_metadata.price_per_share,
         });
 
         shares
@@ -540,6 +609,13 @@ module villa_rwa::villa_dnft {
             affiliate_code: generate_affiliate_code(tx_context::sender(ctx), clock, ctx),
             is_affiliate_active: true,
             created_at: clock::timestamp_ms(clock),
+            // Marketplace metadata
+            name: string::utf8(b"Villa Share NFT"),
+            description: string::utf8(b"Fractional ownership of luxury villa"),
+            image_url: string::utf8(b"https://example.com/villa-share-nft.png"),
+            price: villa_metadata.price_per_share,
+            is_listed: false,
+            listing_price: 0,
         };
 
         villa_metadata.shares_issued = villa_metadata.shares_issued + 1;
@@ -553,6 +629,11 @@ module villa_rwa::villa_dnft {
             amount: 1,
             total_shares_issued: villa_metadata.shares_issued,
             created_at: clock::timestamp_ms(clock),
+            // Marketplace metadata
+            nft_name: string::utf8(b"Villa Share NFT"),
+            nft_description: string::utf8(b"Fractional ownership of luxury villa"),
+            nft_image_url: string::utf8(b"https://example.com/villa-share-nft.png"),
+            nft_price: villa_metadata.price_per_share,
         });
 
         share_nft
@@ -584,6 +665,13 @@ module villa_rwa::villa_dnft {
                 affiliate_code: generate_affiliate_code(tx_context::sender(ctx), clock, ctx),
                 is_affiliate_active: true,
                 created_at: clock::timestamp_ms(clock),
+                // Marketplace metadata
+                name: string::utf8(b"Villa Share NFT"),
+                description: string::utf8(b"Fractional ownership of luxury villa"),
+                image_url: string::utf8(b"https://example.com/villa-share-nft.png"),
+                price: villa_metadata.price_per_share,
+                is_listed: false,
+                listing_price: 0,
             };
             vector::push_back(&mut shares, share_nft);
             i = i + 1;
@@ -600,6 +688,11 @@ module villa_rwa::villa_dnft {
             amount,
             total_shares_issued: villa_metadata.shares_issued,
             created_at: clock::timestamp_ms(clock),
+            // Marketplace metadata
+            nft_name: string::utf8(b"Villa Share NFT"),
+            nft_description: string::utf8(b"Fractional ownership of luxury villa"),
+            nft_image_url: string::utf8(b"https://example.com/villa-share-nft.png"),
+            nft_price: villa_metadata.price_per_share,
         });
 
         shares
@@ -648,6 +741,13 @@ module villa_rwa::villa_dnft {
             affiliate_code,
             is_affiliate_active: _,
             created_at: _,
+            // Marketplace metadata fields
+            name: _,
+            description: _,
+            image_url: _,
+            price: _,
+            is_listed: _,
+            listing_price: _,
         } = share_nft;
 
         // Get the ID before deleting the UID
@@ -727,6 +827,13 @@ module villa_rwa::villa_dnft {
             affiliate_code: generate_affiliate_code(tx_context::sender(ctx), clock, ctx),
             is_affiliate_active: true,
             created_at: clock::timestamp_ms(clock),
+            // Marketplace metadata
+            name: string::utf8(b"Villa Share NFT"),
+            description: string::utf8(b"Fractional ownership of luxury villa"),
+            image_url: string::utf8(b"https://example.com/villa-share-nft.png"),
+            price: total_price,
+            is_listed: false,
+            listing_price: 0,
         };
         
         // Record trade
@@ -888,6 +995,134 @@ module villa_rwa::villa_dnft {
         });
 
         claimable_amount
+    }
+
+    // ===== Marketplace Functions =====
+
+    /// Transfer NFT to another address
+    public fun transfer(nft: VillaShareNFT, recipient: address, clock: &Clock, _ctx: &mut TxContext) {
+        let nft_id = object::uid_to_inner(&nft.id);
+        let from = nft.owner;
+        
+        nft.owner = recipient;
+        
+        event::emit(NFTTransferred {
+            nft_id,
+            from,
+            to: recipient,
+            timestamp: clock::timestamp_ms(clock),
+        });
+        
+        transfer::public_transfer(nft, recipient);
+    }
+
+    /// List NFT for sale
+    public fun list_for_sale(nft: &mut VillaShareNFT, price: u64, clock: &Clock, ctx: &mut TxContext) {
+        assert!(nft.owner == tx_context::sender(ctx), ENotOwner);
+        assert!(!nft.is_listed, EAlreadyListed);
+        assert!(price > 0, EInvalidListingPrice);
+
+        nft.is_listed = true;
+        nft.listing_price = price;
+        nft.price = price;
+
+        event::emit(NFTListed {
+            nft_id: object::uid_to_inner(&nft.id),
+            owner: nft.owner,
+            price,
+            timestamp: clock::timestamp_ms(clock),
+        });
+    }
+
+    /// Delist NFT from sale
+    public fun delist(nft: &mut VillaShareNFT, clock: &Clock, ctx: &mut TxContext) {
+        assert!(nft.owner == tx_context::sender(ctx), ENotOwner);
+        assert!(nft.is_listed, ENotListed);
+
+        nft.is_listed = false;
+        nft.listing_price = 0;
+
+        event::emit(NFTDelisted {
+            nft_id: object::uid_to_inner(&nft.id),
+            owner: nft.owner,
+            timestamp: clock::timestamp_ms(clock),
+        });
+    }
+
+    /// Update NFT price
+    public fun update_price(nft: &mut VillaShareNFT, new_price: u64, clock: &Clock, ctx: &mut TxContext) {
+        assert!(nft.owner == tx_context::sender(ctx), ENotOwner);
+        assert!(new_price > 0, EInvalidListingPrice);
+
+        let old_price = nft.price;
+        nft.price = new_price;
+        
+        if (nft.is_listed) {
+            nft.listing_price = new_price;
+        };
+
+        event::emit(PriceUpdated {
+            nft_id: object::uid_to_inner(&nft.id),
+            old_price,
+            new_price,
+            timestamp: clock::timestamp_ms(clock),
+        });
+    }
+
+    /// Get NFT owner
+    public fun get_owner(nft: &VillaShareNFT): address {
+        nft.owner
+    }
+
+    /// Get NFT metadata
+    public fun get_metadata(nft: &VillaShareNFT): (String, String, String) {
+        (nft.name, nft.description, nft.image_url)
+    }
+
+    /// Get NFT name
+    public fun get_name(nft: &VillaShareNFT): &String {
+        &nft.name
+    }
+
+    /// Get NFT description
+    public fun get_description(nft: &VillaShareNFT): &String {
+        &nft.description
+    }
+
+    /// Get NFT image URL
+    public fun get_image_url(nft: &VillaShareNFT): &String {
+        &nft.image_url
+    }
+
+    /// Get NFT price
+    public fun get_price(nft: &VillaShareNFT): u64 {
+        nft.price
+    }
+
+    /// Get NFT listing status
+    public fun is_listed(nft: &VillaShareNFT): bool {
+        nft.is_listed
+    }
+
+    /// Get NFT listing price
+    public fun get_listing_price(nft: &VillaShareNFT): u64 {
+        nft.listing_price
+    }
+
+    /// Update NFT metadata (only owner can update)
+    public fun update_metadata(
+        nft: &mut VillaShareNFT, 
+        new_name: String, 
+        new_description: String, 
+        new_image_url: String,
+        _clock: &Clock,
+        ctx: &mut TxContext
+    ) {
+        assert!(nft.owner == tx_context::sender(ctx), ENotOwner);
+        
+        nft.name = new_name;
+        nft.description = new_description;
+        nft.image_url = new_image_url;
     }
 
     // ===== Utility Functions =====

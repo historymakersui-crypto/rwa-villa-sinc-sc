@@ -659,6 +659,34 @@ module villa_rwa::villa_dnft {
         timestamp: u64,
     }
 
+    // Marketplace events
+    struct NFTListed has copy, drop {
+        nft_id: ID,
+        owner: address,
+        price: u64,
+        timestamp: u64,
+    }
+
+    struct NFTDelisted has copy, drop {
+        nft_id: ID,
+        owner: address,
+        timestamp: u64,
+    }
+
+    struct NFTTransferred has copy, drop {
+        nft_id: ID,
+        from: address,
+        to: address,
+        timestamp: u64,
+    }
+
+    struct PriceUpdated has copy, drop {
+        nft_id: ID,
+        old_price: u64,
+        new_price: u64,
+        timestamp: u64,
+    }
+
     // ===== Initialization =====
 
     /// Create Display object for VillaShareNFT (for wallet rendering)
