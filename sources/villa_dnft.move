@@ -1,9 +1,7 @@
 /// Villa RWA Dynamic NFT Implementation for Sui
-/// Final working implementation
+/// Final working implementation for Sui Mainnet
 module villa_rwa::villa_dnft {
-    use sui::object::{Self, UID, ID};
     use sui::transfer as sui_transfer;
-    use sui::tx_context::{Self, TxContext};
     use sui::table::{Self, Table};
     use sui::clock::{Self, Clock};
     use sui::event;
@@ -13,25 +11,17 @@ module villa_rwa::villa_dnft {
     use sui::package;
     use sui::display;
     use std::string::{Self, String};
-    use std::vector;
+    use usdc::usdc::USDC;
 
     // ===== Error Codes =====
     const ENotAuthorized: u64 = 1;
     const EInvalidMaxShares: u64 = 11;
     const EInvalidPrice: u64 = 12;
-    const EListingNotFound: u64 = 14;
     const EListingExpired: u64 = 15;
     const EExceedsProjectLimit: u64 = 9;
     const EExceedsVillaLimit: u64 = 10;
-    const EInvalidCommissionRate: u64 = 16;
-    // const EInvalidAmount: u64 = 17; // REMOVED - unused constant
     const EInvalidPricePerShare: u64 = 17;
     const EExceedsMaxShares: u64 = 18;
-    // Marketplace error codes
-    const ENotListed: u64 = 19;
-    const EAlreadyListed: u64 = 20;
-    const EInvalidListingPrice: u64 = 21;
-    const ENotOwner: u64 = 22;
     // Enhanced capability system error codes
     const ENotSuperAdmin: u64 = 23;
     const ENotAdmin: u64 = 24;
@@ -43,16 +33,8 @@ module villa_rwa::villa_dnft {
     const EInsufficientBalance: u64 = 29;
     const EInsufficientPayment: u64 = 30;
     const EAddressNotRegistered: u64 = 31;
-    // Commission system error codes
-    const EInsufficientTreasuryBalance: u64 = 32;
-    // const ECommissionNotConfigured: u64 = 33; // REMOVED - unused constant
-    // Batch escrow system error codes
     const EInvalidAmount: u64 = 33;
-    const EExceedsBatchLimit: u64 = 34;
-    const EInvalidEscrowStatus: u64 = 35;
-    const EEscrowExpired: u64 = 36;
-    const EInvalidCancelReason: u64 = 37;
-    const EInvalidBatchEscrowStatus: u64 = 38;
+    const ENotOwner: u64 = 34;
 
     // ===== Capability Objects =====
     public struct VILLA_DNFT has drop {}
@@ -176,53 +158,6 @@ module villa_rwa::villa_dnft {
         listing_price: u64,
     }
 
-    public struct DNFTListing has key, store {
-        id: UID,
-        share_nft_id: ID,
-        project_id: String,
-        villa_id: String,
-        seller: address,
-        price: u64,
-        affiliate_code: String,
-        is_active: bool,
-        created_at: u64,
-        expires_at: u64,
-        // Marketplace metadata
-        nft_name: String,
-        nft_description: String,
-        nft_image_url: String,
-    }
-
-    public struct DNFTTrade has key, store {
-        id: UID,
-        share_nft_id: ID,
-        project_id: String,
-        villa_id: String,
-        seller: address,
-        buyer: address,
-        price: u64,
-        affiliate_commission: u64,
-        app_commission: u64,
-        timestamp: u64,
-    }
-
-    // Commission data that can be dropped
-    public struct SaleCommission has drop {
-        affiliate_commission: u64,
-        app_commission: u64,
-        total_price: u64,
-    }
-
-    public struct VillaMarketplace has key, store {
-        id: UID,
-        project_id: String,
-        listings: Table<ID, DNFTListing>,
-        trades: Table<ID, DNFTTrade>,
-        commission_rate: u64,
-        affiliate_rate: u64,
-        created_at: u64,
-    }
-
     public struct AffiliateReward has key, store {
         id: UID,
         affiliate_code: String,
@@ -244,24 +179,12 @@ module villa_rwa::villa_dnft {
         updated_at: u64,
     }
 
-    /// Commission Configuration - manages commission rates and settings
-    public struct CommissionConfig has key, store {
+    /// Treasury Configuration - stores treasury wallet address (owner-updateable)
+    #[allow(unused_field)]
+    public struct TreasuryConfig has key, store {
         id: UID,
-        default_commission_rate: u64, // Default 10% (1000 basis points)
-        current_commission_rate: u64, // Current commission rate
-        admin_address: address, // Admin address (exempt from commission)
-        is_active: bool,
-        created_at: u64,
-        updated_at: u64,
-    }
-
-    /// Treasury Balance - stores actual SUI/USDC balance for commission withdrawal
-    public struct TreasuryBalance has key, store {
-        id: UID,
-        sui_balance: Balance<SUI>,
-        usdc_balance: Balance<USDC>,
-        total_commission_earned: u64,
-        total_commission_withdrawn: u64,
+        treasury_address: address,
+        admin_address: address,
         created_at: u64,
         updated_at: u64,
     }
@@ -287,49 +210,6 @@ module villa_rwa::villa_dnft {
         updated_at: u64,
     }
 
-    /// USDC token type for payments
-    public struct USDC has drop {}
-
-    // ===== Batch Escrow Configuration =====
-
-    /// Batch Escrow Configuration - manages batch escrow settings
-    public struct BatchEscrowConfig has key, store {
-        id: UID,
-        max_batch_size: u64,              // Maximum NFTs per batch (default: 100)
-        default_expiry_hours: u64,        // Default expiry time in hours (default: 1)
-        default_affiliate_active: bool,   // Default affiliate active status for minted NFTs (default: true)
-        created_at: u64,
-        updated_at: u64,
-    }
-
-    // ===== Batch Escrow System =====
-
-    /// Batch Escrow for atomic batch minting with payment
-    public struct BatchEscrow<phantom T> has key, store {
-        id: UID,
-        buyer: address,                    // User address who purchased
-        platform: address,                 // Platform address (admin)
-        total_amount: u64,                 // Total payment amount for all NFTs
-        nft_count: u64,                    // Number of NFTs to be minted
-        nft_ids: vector<ID>,               // IDs of successfully minted NFTs
-        project_id: String,                // Villa project ID
-        villa_id: String,                  // Villa ID
-        created_at: u64,                   // Escrow creation timestamp
-        expires_at: u64,                   // Escrow expiration timestamp
-        status: u8,                        // Escrow status
-        successful_nfts: u64,              // Number of successfully minted NFTs
-        failed_nfts: u64,                  // Number of failed minted NFTs
-        processed_amount: u64,             // Amount processed for successful NFTs
-        refund_amount: u64,                // Amount to be refunded for failed NFTs
-    }
-
-    /// Batch Escrow Status Constants
-    const BATCH_ESCROW_PENDING: u8 = 0;     // Escrow waiting for batch minting
-    const BATCH_ESCROW_PROCESSING: u8 = 1;  // Currently processing batch minting
-    const BATCH_ESCROW_COMPLETED: u8 = 2;   // All NFTs successfully minted
-    const BATCH_ESCROW_PARTIAL: u8 = 3;     // Some NFTs successfully minted
-    const BATCH_ESCROW_FAILED: u8 = 4;      // All NFTs failed to mint
-    const BATCH_ESCROW_CANCELLED: u8 = 5;   // Escrow cancelled
 
     // ===== Events =====
 
@@ -372,22 +252,7 @@ module villa_rwa::villa_dnft {
         nft_price: u64,
     }
 
-    public struct DNFTListed has copy, drop {
-        share_nft_id: ID,
-        seller: address,
-        price: u64,
-        created_at: u64,
-    }
-
-    public struct DNFTBought has copy, drop {
-        share_nft_id: ID,
-        buyer: address,
-        seller: address,
-        price: u64,
-        affiliate_commission: u64,
-        app_commission: u64,
-    }
-
+    #[allow(unused_field)]
     public struct AffiliateRewardEarned has copy, drop {
         affiliate_code: String,
         owner: address,
@@ -398,34 +263,6 @@ module villa_rwa::villa_dnft {
     public struct CommissionPaid has copy, drop {
         recipient: address,
         amount: u64,
-        timestamp: u64,
-    }
-
-    // Marketplace events
-    public struct NFTListed has copy, drop {
-        nft_id: ID,
-        owner: address,
-        price: u64,
-        timestamp: u64,
-    }
-
-    public struct NFTDelisted has copy, drop {
-        nft_id: ID,
-        owner: address,
-        timestamp: u64,
-    }
-
-    public struct NFTTransferred has copy, drop {
-        nft_id: ID,
-        from: address,
-        to: address,
-        timestamp: u64,
-    }
-
-    public struct PriceUpdated has copy, drop {
-        nft_id: ID,
-        old_price: u64,
-        new_price: u64,
         timestamp: u64,
     }
 
@@ -479,6 +316,7 @@ module villa_rwa::villa_dnft {
         timestamp: u64,
     }
 
+    #[allow(unused_field)]
     public struct AdminListedForUser has copy, drop {
         nft_id: ID,
         admin_address: address,
@@ -509,6 +347,7 @@ module villa_rwa::villa_dnft {
         timestamp: u64,
     }
 
+    #[allow(unused_field)]
     public struct AdminBoughtForUser has copy, drop {
         nft_id: ID,
         admin_address: address,
@@ -563,127 +402,6 @@ module villa_rwa::villa_dnft {
     public struct AddressRegistered has copy, drop {
         address: address,
         registered_by: address,
-        timestamp: u64,
-    }
-
-    /// Commission system events
-    public struct CommissionConfigUpdated has copy, drop {
-        admin_address: address,
-        old_rate: u64,
-        new_rate: u64,
-        timestamp: u64,
-    }
-
-    public struct CommissionCollected has copy, drop {
-        seller_address: address,
-        buyer_address: address,
-        total_price: u64,
-        commission_amount: u64,
-        seller_received: u64,
-        timestamp: u64,
-    }
-
-    public struct CommissionWithdrawn has copy, drop {
-        admin_address: address,
-        amount: u64,
-        token_type: String,
-        timestamp: u64,
-    }
-
-    public struct TreasuryBalanceUpdated has copy, drop {
-        sui_balance: u64,
-        usdc_balance: u64,
-        total_earned: u64,
-        timestamp: u64,
-    }
-
-    public struct AffiliateConfigUpdated has copy, drop {
-        admin_address: address,
-        old_prefix: String,
-        new_prefix: String,
-        timestamp: u64,
-    }
-
-    // ===== Batch Escrow Events =====
-
-    public struct BatchEscrowCreated has copy, drop {
-        escrow_id: ID,
-        buyer: address,
-        platform: address,
-        total_amount: u64,
-        nft_count: u64,
-        project_id: String,
-        villa_id: String,
-        expires_at: u64,
-        timestamp: u64,
-    }
-
-    public struct BatchMintingCompleted has copy, drop {
-        escrow_id: ID,
-        buyer: address,
-        platform: address,
-        total_nfts: u64,
-        successful_nfts: u64,
-        failed_nfts: u64,
-        processed_amount: u64,
-        refund_amount: u64,
-        timestamp: u64,
-    }
-
-    public struct BatchEscrowProcessed has copy, drop {
-        escrow_id: ID,
-        buyer: address,
-        platform: address,
-        processed_amount: u64,
-        refund_amount: u64,
-        successful_nfts: u64,
-        failed_nfts: u64,
-        timestamp: u64,
-    }
-
-    public struct BatchEscrowCancelled has copy, drop {
-        escrow_id: ID,
-        buyer: address,
-        platform: address,
-        total_amount: u64,
-        nft_count: u64,
-        cancel_reason: u8,
-        timestamp: u64,
-    }
-
-    public struct BatchEscrowConfigUpdated has copy, drop {
-        admin_address: address,
-        max_batch_size: u64,
-        default_expiry_hours: u64,
-        default_affiliate_active: bool,
-        timestamp: u64,
-    }
-
-    // Marketplace events
-    struct NFTListed has copy, drop {
-        nft_id: ID,
-        owner: address,
-        price: u64,
-        timestamp: u64,
-    }
-
-    struct NFTDelisted has copy, drop {
-        nft_id: ID,
-        owner: address,
-        timestamp: u64,
-    }
-
-    struct NFTTransferred has copy, drop {
-        nft_id: ID,
-        from: address,
-        to: address,
-        timestamp: u64,
-    }
-
-    struct PriceUpdated has copy, drop {
-        nft_id: ID,
-        old_price: u64,
-        new_price: u64,
         timestamp: u64,
     }
 
@@ -743,26 +461,29 @@ module villa_rwa::villa_dnft {
         // NOTE: Display object will be created separately after upgrade
         // by calling create_and_transfer_display() with the stored Publisher
         
-        // Create app capability
+        // Create app capability (OWNED — not shared)
         let app_cap = AppCap {
             id: object::new(ctx),
             app_address: tx_context::sender(ctx),
         };
-        sui_transfer::share_object(app_cap);
+        // Auditor Fix: Do NOT share capabilities. Transfer ownership to deployer.
+        sui_transfer::transfer(app_cap, tx_context::sender(ctx));
 
-        // Create admin capability
+        // Create admin capability (OWNED — not shared)
         let admin_cap = AdminCap {
             id: object::new(ctx),
             app_address: tx_context::sender(ctx),
         };
-        sui_transfer::share_object(admin_cap);
+        // Auditor Fix: Do NOT share capabilities. Transfer ownership to deployer.
+        sui_transfer::transfer(admin_cap, tx_context::sender(ctx));
 
-        // Create asset manager capability
+        // Create asset manager capability (OWNED — not shared)
         let asset_manager_cap = AssetManagerCap {
             id: object::new(ctx),
             app_address: tx_context::sender(ctx),
         };
-        sui_transfer::share_object(asset_manager_cap);
+        // Auditor Fix: Do NOT share capabilities. Transfer ownership to deployer.
+        sui_transfer::transfer(asset_manager_cap, tx_context::sender(ctx));
 
         // Create Super Admin Registry
         let mut super_admin_registry = SuperAdminRegistry {
@@ -851,7 +572,6 @@ module villa_rwa::villa_dnft {
             string::utf8(b"PROJECT_MANAGEMENT"),
             string::utf8(b"VILLA_MANAGEMENT"),
             string::utf8(b"MINTING"),
-            string::utf8(b"MARKETPLACE_MANAGEMENT"),
             string::utf8(b"ADMIN_LIST_FOR_USER"),
             string::utf8(b"ADMIN_MINT_FOR_USER"),
             string::utf8(b"ADMIN_MINT_FOR_ADMIN"),
@@ -863,8 +583,7 @@ module villa_rwa::villa_dnft {
         table::add(&mut role_permission_registry.roles, string::utf8(b"ADMIN"), admin_permissions);
 
         let moderator_permissions = vector[
-            string::utf8(b"VILLA_MANAGEMENT"),
-            string::utf8(b"MARKETPLACE_MANAGEMENT")
+            string::utf8(b"VILLA_MANAGEMENT")
         ];
         table::add(&mut role_permission_registry.roles, string::utf8(b"MODERATOR"), moderator_permissions);
 
@@ -879,30 +598,8 @@ module villa_rwa::villa_dnft {
         sui_transfer::share_object(address_registry);
         sui_transfer::share_object(role_permission_registry);
 
-        // Create commission configuration (default 10%)
-        let current_timestamp = 0; // Will be updated when clock is available
-        let commission_config = CommissionConfig {
-            id: object::new(ctx),
-            default_commission_rate: 1000, // 10% = 1000 basis points
-            current_commission_rate: 1000, // 10% = 1000 basis points
-            admin_address: tx_context::sender(ctx),
-            is_active: true,
-            created_at: current_timestamp,
-            updated_at: current_timestamp,
-        };
-
-        // Create treasury balance
-        let treasury_balance = TreasuryBalance {
-            id: object::new(ctx),
-            sui_balance: balance::zero<SUI>(),
-            usdc_balance: balance::zero<USDC>(),
-            total_commission_earned: 0,
-            total_commission_withdrawn: 0,
-            created_at: current_timestamp,
-            updated_at: current_timestamp,
-        };
-
         // Initialize affiliate configuration with default values
+        let current_timestamp = 0; // Will be updated when clock is available
         let affiliate_config = AffiliateConfig {
             id: object::new(ctx),
             default_prefix: string::utf8(b"AF"), // Default prefix "AF"
@@ -913,9 +610,7 @@ module villa_rwa::villa_dnft {
             updated_at: current_timestamp,
         };
 
-        // Transfer commission config, treasury balance, and affiliate config to admin
-        sui_transfer::transfer(commission_config, tx_context::sender(ctx));
-        sui_transfer::transfer(treasury_balance, tx_context::sender(ctx));
+        // Transfer affiliate config to admin
         sui_transfer::transfer(affiliate_config, tx_context::sender(ctx));
     }
 
@@ -945,13 +640,11 @@ module villa_rwa::villa_dnft {
     /// Create shared AppCap that can be used by anyone (only by AdminCap)
     public fun create_shared_app_cap(
         _admin_cap: &AdminCap,
-        ctx: &mut TxContext
+        _ctx: &mut TxContext
     ) {
-        let shared_app_cap = AppCap {
-            id: object::new(ctx),
-            app_address: @0x0, // Special address for shared cap
-        };
-        sui_transfer::share_object(shared_app_cap);
+        // Auditor Fix: Disabled. Creating shared capabilities is insecure.
+        // This function intentionally aborts to prevent shared AppCap creation.
+        assert!(false, EPermissionDenied);
     }
 
     /// Create villa project using AdminCap (alternative to AppCap)
@@ -967,8 +660,8 @@ module villa_rwa::villa_dnft {
         ctx: &mut TxContext
     ): VillaProject {
         assert!(max_total_shares > 0, EInvalidMaxShares);
-        assert!(commission_rate <= 10000, EInvalidCommissionRate);
-        assert!(affiliate_rate <= 10000, EInvalidCommissionRate);
+        assert!(commission_rate <= 10000, EInvalidAmount);
+        assert!(affiliate_rate <= 10000, EInvalidAmount);
 
         let project = VillaProject {
             id: object::new(ctx),
@@ -1264,70 +957,48 @@ module villa_rwa::villa_dnft {
         delegation_cap
     }
 
-    /// Admin list NFT for user (bypass ownership check)
-    public fun admin_list_for_user(
-        super_admin_registry: &mut SuperAdminRegistry,
-        nft: &mut VillaShareNFT,
-        price: u64,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ) {
-        let admin_address = tx_context::sender(ctx);
-        assert!(table::contains(&super_admin_registry.admins, admin_address), ENotAdmin);
-        
-        let admin_info = table::borrow(&super_admin_registry.admins, admin_address);
-        assert!(admin_info.is_active, ENotAdmin);
-        
-        // Check if admin has ADMIN_LIST_FOR_USER permission
-        let mut has_permission = false;
-        let mut i = 0;
-        let len = vector::length(&admin_info.permissions);
-        while (i < len) {
-            if (vector::borrow(&admin_info.permissions, i) == &string::utf8(b"ADMIN_LIST_FOR_USER")) {
-                has_permission = true;
-                break
-            };
-            i = i + 1;
-        };
-        assert!(has_permission, EPermissionDenied);
-
-        assert!(!nft.is_listed, EAlreadyListed);
-        assert!(price > 0, EInvalidListingPrice);
-
-        nft.is_listed = true;
-        nft.listing_price = price;
-        nft.price = price;
-
-        event::emit(AdminListedForUser {
-            nft_id: object::uid_to_inner(&nft.id),
-            admin_address,
-            user_address: nft.owner,
-            price,
-            timestamp: clock::timestamp_ms(clock),
-        });
-
-        event::emit(NFTListed {
-            nft_id: object::uid_to_inner(&nft.id),
-            owner: nft.owner,
-            price,
-            timestamp: clock::timestamp_ms(clock),
-        });
-    }
-
-    /// Admin mint NFT for user
+    /// ═══════════════════════════════════════════════════════════════════════════════════
+    /// Admin mint NFT for user WITH PAYMENT + ATOMIC VALIDATION
+    /// ═══════════════════════════════════════════════════════════════════════════════════
+    /// 
+    /// This function performs atomic payment + minting in a single blockchain transaction:
+    /// 1. Validates payment amount ≥ expected_amount (fails if insufficient)
+    /// 2. Validates admin permission + admin active status
+    /// 3. Validates NFT availability (shares_issued < max_shares & project capacity)
+    /// 4. Deposits payment to treasury (irreversible state change on success)
+    /// 5. Mints NFT to user wallet
+    /// 
+    /// Guarantees:
+    /// - If payment validation fails → Entire TX aborts, NO payment taken, NO minting
+    /// - If admin/permission validation fails → Entire TX aborts, NO payment taken, NO minting
+    /// - If NFT availability fails → Entire TX aborts, NO payment taken, NO minting
+    /// - If all validations pass → Payment deposited AND NFT minted (atomic)
+    /// - If minting fails after payment → Entire TX aborts, payment returned (blockchain atomic)
+    ///
     public fun admin_mint_for_user(
         super_admin_registry: &mut SuperAdminRegistry,
         user_address: address,
         project: &mut VillaProject,
         villa_metadata: &mut VillaMetadata,
         affiliate_config: &AffiliateConfig,
+        treasury_config: &TreasuryConfig,
+        payment: Coin<USDC>,
+        expected_amount: u64,
         nft_name: String,
         nft_description: String,
         nft_image_url: String,
         clock: &Clock,
         ctx: &mut TxContext
     ): VillaShareNFT {
-        // Validate admin permissions
+        // ════════════════════════════════════════════════════════════════════════════════
+        // STEP 1: VALIDATE PAYMENT - FAIL FAST (before any state changes)
+        // ════════════════════════════════════════════════════════════════════════════════
+        let payment_amount = coin::value(&payment);
+        assert!(payment_amount >= expected_amount, EInsufficientPayment);
+
+        // ════════════════════════════════════════════════════════════════════════════════
+        // STEP 2: VALIDATE ADMIN PERMISSIONS (before any state changes)
+        // ════════════════════════════════════════════════════════════════════════════════
         let admin_address = tx_context::sender(ctx);
         assert!(table::contains(&super_admin_registry.admins, admin_address), ENotAdmin);
         
@@ -1347,16 +1018,25 @@ module villa_rwa::villa_dnft {
         };
         assert!(has_permission, EPermissionDenied);
 
-        // Validate minting constraints
+        // ════════════════════════════════════════════════════════════════════════════════
+        // STEP 3: VALIDATE NFT AVAILABILITY (before any state changes)
+        // ════════════════════════════════════════════════════════════════════════════════
         assert!(villa_metadata.shares_issued < villa_metadata.max_shares, EExceedsVillaLimit);
         assert!(project.total_shares_issued < project.max_total_shares, EExceedsProjectLimit);
 
-        // Mint NFT for user
+        // ════════════════════════════════════════════════════════════════════════════════
+        // STEP 4: IF ALL VALIDATIONS PASS → TRANSFER PAYMENT DIRECTLY TO TREASURY WALLET
+        // ════════════════════════════════════════════════════════════════════════════════
+        sui_transfer::public_transfer(payment, treasury_config.treasury_address);
+
+        // ════════════════════════════════════════════════════════════════════════════════
+        // STEP 5: MINT NFT FOR USER (guaranteed to succeed after step 4 if implementation correct)
+        // ════════════════════════════════════════════════════════════════════════════════
         let share_nft = VillaShareNFT {
             id: object::new(ctx),
             project_id: project.project_id,
             villa_id: villa_metadata.villa_id,
-            owner: user_address, // User becomes owner
+            owner: user_address, // User becomes owner (parameter-specified)
             affiliate_code: generate_affiliate_code(user_address, affiliate_config, clock, ctx),
             is_affiliate_active: true,
             created_at: clock::timestamp_ms(clock),
@@ -1368,13 +1048,15 @@ module villa_rwa::villa_dnft {
             listing_price: 0,
         };
 
-        // Update counters
+        // Update counters (after all validations and after minting object created)
         villa_metadata.shares_issued = villa_metadata.shares_issued + 1;
         villa_metadata.updated_at = clock::timestamp_ms(clock);
         project.total_shares_issued = project.total_shares_issued + 1;
         project.updated_at = clock::timestamp_ms(clock);
 
-        // Emit events
+        // ════════════════════════════════════════════════════════════════════════════════
+        // EMIT EVENTS - with payment information
+        // ════════════════════════════════════════════════════════════════════════════════
         event::emit(AdminMintedForUser {
             nft_id: object::uid_to_inner(&share_nft.id),
             admin_address,
@@ -1403,12 +1085,19 @@ module villa_rwa::villa_dnft {
         project: &mut VillaProject,
         villa_metadata: &mut VillaMetadata,
         affiliate_config: &AffiliateConfig,
+        treasury_config: &TreasuryConfig,
+        payment: Coin<USDC>,
+        expected_amount: u64,
         nft_name: String,
         nft_description: String,
         nft_image_url: String,
         clock: &Clock,
         ctx: &mut TxContext
     ): VillaShareNFT {
+        // Validate payment first (USDC)
+        let payment_amount = coin::value(&payment);
+        assert!(payment_amount >= expected_amount, EInsufficientPayment);
+
         // Validate admin permissions
         let admin_address = tx_context::sender(ctx);
         assert!(table::contains(&super_admin_registry.admins, admin_address), ENotAdmin);
@@ -1433,21 +1122,24 @@ module villa_rwa::villa_dnft {
         assert!(villa_metadata.shares_issued < villa_metadata.max_shares, EExceedsVillaLimit);
         assert!(project.total_shares_issued < project.max_total_shares, EExceedsProjectLimit);
 
+        // Transfer USDC payment directly to treasury wallet (no storage in struct)
+        sui_transfer::public_transfer(payment, treasury_config.treasury_address);
+
         // Mint NFT for admin (admin becomes owner)
-            let share_nft = VillaShareNFT {
-                id: object::new(ctx),
-                project_id: project.project_id,
-                villa_id: villa_metadata.villa_id,
+        let share_nft = VillaShareNFT {
+            id: object::new(ctx),
+            project_id: project.project_id,
+            villa_id: villa_metadata.villa_id,
             owner: admin_address, // Admin becomes owner
             affiliate_code: generate_affiliate_code(admin_address, affiliate_config, clock, ctx),
-                is_affiliate_active: true,
-                created_at: clock::timestamp_ms(clock),
-                name: nft_name,
-                description: nft_description,
-                image_url: nft_image_url,
-                price: villa_metadata.price_per_share,
-                is_listed: false,
-                listing_price: 0,
+            is_affiliate_active: true,
+            created_at: clock::timestamp_ms(clock),
+            name: nft_name,
+            description: nft_description,
+            image_url: nft_image_url,
+            price: villa_metadata.price_per_share,
+            is_listed: false,
+            listing_price: 0,
         };
 
         // Update counters
@@ -1515,19 +1207,12 @@ module villa_rwa::villa_dnft {
         // Transfer ownership
         nft.owner = to_address;
 
-        // Emit events
+        // Emit admin transfer audit event
         event::emit(AdminTransferredForUser {
             nft_id,
             admin_address,
             from_address,
             to_address,
-            timestamp: clock::timestamp_ms(clock),
-        });
-
-        event::emit(NFTTransferred {
-            nft_id,
-            from: from_address,
-            to: to_address,
             timestamp: clock::timestamp_ms(clock),
         });
 
@@ -1575,7 +1260,7 @@ module villa_rwa::villa_dnft {
         // Transfer ownership
         nft.owner = to_address;
 
-        // Emit events
+        // Emit admin transfer audit event
         event::emit(AdminTransferredForUser {
             nft_id,
             admin_address,
@@ -1583,136 +1268,6 @@ module villa_rwa::villa_dnft {
             to_address,
             timestamp: clock::timestamp_ms(clock),
         });
-
-        event::emit(NFTTransferred {
-            nft_id,
-            from: from_address,
-            to: to_address,
-            timestamp: clock::timestamp_ms(clock),
-        });
-    }
-
-    /// Admin buy NFT for user
-    public fun admin_buy_for_user(
-        super_admin_registry: &mut SuperAdminRegistry,
-        marketplace: &mut VillaMarketplace,
-        _commission_config: &mut CommissionConfig,
-        _treasury_balance: &mut TreasuryBalance,
-        affiliate_config: &AffiliateConfig,
-        listing_id: ID,
-        buyer_address: address,
-        _user_payment: Coin<SUI>,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ): VillaShareNFT {
-        // Validate admin permissions
-        let admin_address = tx_context::sender(ctx);
-        assert!(table::contains(&super_admin_registry.admins, admin_address), ENotAdmin);
-        
-        let admin_info = table::borrow(&super_admin_registry.admins, admin_address);
-        assert!(admin_info.is_active, ENotAdmin);
-        
-        // Check if admin has ADMIN_BUY_FOR_USER permission
-        let mut has_permission = false;
-        let mut i = 0;
-        let len = vector::length(&admin_info.permissions);
-        while (i < len) {
-            if (vector::borrow(&admin_info.permissions, i) == &string::utf8(b"ADMIN_BUY_FOR_USER")) {
-                has_permission = true;
-                break
-            };
-            i = i + 1;
-        };
-        assert!(has_permission, EPermissionDenied);
-
-        // Get listing
-        let listing = table::remove(&mut marketplace.listings, listing_id);
-        
-        assert!(listing.is_active, EListingNotFound);
-        assert!(clock::timestamp_ms(clock) <= listing.expires_at, EListingExpired);
-        
-        // Extract data from listing
-        let DNFTListing {
-            id: listing_id_uid,
-            share_nft_id,
-            project_id,
-            villa_id,
-            seller,
-            price: total_price,
-            affiliate_code: _,
-            is_active: _,
-            created_at: _,
-            expires_at: _,
-            nft_name,
-            nft_description,
-            nft_image_url,
-        } = listing;
-        
-        // Validate payment
-        assert!(coin::value(&_user_payment) >= total_price, EInsufficientPayment);
-        
-        // Calculate commissions
-        let affiliate_commission = (total_price * marketplace.affiliate_rate) / 10000;
-        let app_commission = (total_price * marketplace.commission_rate) / 10000;
-        
-        // Transfer payment to seller
-        sui_transfer::public_transfer(_user_payment, seller);
-        
-        // Create new NFT for buyer
-        let share_nft = VillaShareNFT {
-            id: object::new(ctx),
-            project_id,
-            villa_id,
-            owner: buyer_address, // User becomes owner
-            affiliate_code: generate_affiliate_code(buyer_address, affiliate_config, clock, ctx),
-            is_affiliate_active: true,
-            created_at: clock::timestamp_ms(clock),
-            name: nft_name,
-            description: nft_description,
-            image_url: nft_image_url,
-            price: total_price,
-            is_listed: false,
-            listing_price: 0,
-        };
-        
-        // Record trade
-        let trade = DNFTTrade {
-            id: object::new(ctx),
-            share_nft_id,
-            project_id,
-            villa_id,
-            seller,
-            buyer: buyer_address,
-            price: total_price,
-            affiliate_commission,
-            app_commission,
-            timestamp: clock::timestamp_ms(clock),
-        };
-        table::add(&mut marketplace.trades, share_nft_id, trade);
-        
-        // Delete the listing UID
-        object::delete(listing_id_uid);
-        
-        // Emit events
-        event::emit(AdminBoughtForUser {
-            nft_id: object::uid_to_inner(&share_nft.id),
-            admin_address,
-            buyer_address,
-            seller_address: seller,
-            price: total_price,
-            timestamp: clock::timestamp_ms(clock),
-        });
-
-        event::emit(DNFTBought {
-            share_nft_id: object::uid_to_inner(&share_nft.id),
-            buyer: buyer_address,
-            seller,
-            price: total_price,
-            affiliate_commission,
-            app_commission,
-        });
-        
-        share_nft
     }
 
     /// Get all admins list
@@ -2101,6 +1656,7 @@ module villa_rwa::villa_dnft {
 
     public fun create_villa_project(
         _app_cap: &AppCap,
+        super_admin_registry: &SuperAdminRegistry,
         project_id: String,
         name: String,
         description: String,
@@ -2110,9 +1666,34 @@ module villa_rwa::villa_dnft {
         clock: &Clock,
         ctx: &mut TxContext
     ): VillaProject {
+        // ════════════════════════════════════════════════════════════════════════════════
+        // STEP 1: VALIDATE ADMIN PERMISSIONS (before any state changes)
+        // ════════════════════════════════════════════════════════════════════════════════
+        let admin_address = tx_context::sender(ctx);
+        assert!(table::contains(&super_admin_registry.admins, admin_address), ENotAdmin);
+        
+        let admin_info = table::borrow(&super_admin_registry.admins, admin_address);
+        assert!(admin_info.is_active, ENotAdmin);
+        
+        // Check if admin has PROJECT_MANAGEMENT permission
+        let mut has_permission = false;
+        let mut i = 0;
+        let len = vector::length(&admin_info.permissions);
+        while (i < len) {
+            if (vector::borrow(&admin_info.permissions, i) == &string::utf8(b"PROJECT_MANAGEMENT")) {
+                has_permission = true;
+                break
+            };
+            i = i + 1;
+        };
+        assert!(has_permission, EPermissionDenied);
+
+        // ════════════════════════════════════════════════════════════════════════════════
+        // STEP 2: VALIDATE PROJECT PARAMETERS
+        // ════════════════════════════════════════════════════════════════════════════════
         assert!(max_total_shares > 0, EInvalidMaxShares);
-        assert!(commission_rate <= 10000, EInvalidCommissionRate);
-        assert!(affiliate_rate <= 10000, EInvalidCommissionRate);
+        assert!(commission_rate <= 10000, EInvalidAmount);
+        assert!(affiliate_rate <= 10000, EInvalidAmount);
 
         let project = VillaProject {
             id: object::new(ctx),
@@ -2140,6 +1721,7 @@ module villa_rwa::villa_dnft {
 
     public fun create_villa_metadata(
         _app_cap: &AppCap,
+        super_admin_registry: &SuperAdminRegistry,
         project: &mut VillaProject,
         villa_id: String,
         name: String,
@@ -2151,6 +1733,31 @@ module villa_rwa::villa_dnft {
         clock: &Clock,
         ctx: &mut TxContext
     ): VillaMetadata {
+        // ════════════════════════════════════════════════════════════════════════════════
+        // STEP 1: VALIDATE ADMIN PERMISSIONS (before any state changes)
+        // ════════════════════════════════════════════════════════════════════════════════
+        let admin_address = tx_context::sender(ctx);
+        assert!(table::contains(&super_admin_registry.admins, admin_address), ENotAdmin);
+        
+        let admin_info = table::borrow(&super_admin_registry.admins, admin_address);
+        assert!(admin_info.is_active, ENotAdmin);
+        
+        // Check if admin has VILLA_MANAGEMENT permission
+        let mut has_permission = false;
+        let mut i = 0;
+        let len = vector::length(&admin_info.permissions);
+        while (i < len) {
+            if (vector::borrow(&admin_info.permissions, i) == &string::utf8(b"VILLA_MANAGEMENT")) {
+                has_permission = true;
+                break
+            };
+            i = i + 1;
+        };
+        assert!(has_permission, EPermissionDenied);
+
+        // ════════════════════════════════════════════════════════════════════════════════
+        // STEP 2: VALIDATE VILLA PARAMETERS
+        // ════════════════════════════════════════════════════════════════════════════════
         assert!(max_shares > 0, EInvalidMaxShares);
         assert!(price_per_share > 0, EInvalidPrice);
         assert!(project.total_shares_issued + max_shares <= project.max_total_shares, EExceedsProjectLimit);
@@ -2184,316 +1791,13 @@ module villa_rwa::villa_dnft {
         villa_metadata
     }
 
-    // ===== Minting Functions =====
+    // ═════════════════════════════════════════════════════════════════════════════════════
+    // ✅ DEPRECATED & REMOVED FUNCTIONS
+    // ═════════════════════════════════════════════════════════════════════════════════════
+    // mint_villa_share() - REMOVED (was unused, now replaced by admin_mint_for_user with payment)
+    // mint_villa_shares_batch() - REMOVED (was unused, now replaced by admin_mint_for_user with payment)
+    // Use admin_mint_for_user() instead for all minting operations (includes payment validation)
 
-    public fun mint_villa_share(
-        _app_cap: &AppCap,
-        project: &mut VillaProject,
-        villa_metadata: &mut VillaMetadata,
-        affiliate_config: &AffiliateConfig,
-        nft_name: String,
-        nft_description: String,
-        nft_image_url: String,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ): VillaShareNFT {
-        assert!(villa_metadata.shares_issued < villa_metadata.max_shares, EExceedsVillaLimit);
-        assert!(project.total_shares_issued < project.max_total_shares, EExceedsProjectLimit);
-
-        let share_nft = VillaShareNFT {
-            id: object::new(ctx),
-            project_id: project.project_id,
-            villa_id: villa_metadata.villa_id,
-            owner: tx_context::sender(ctx),
-            affiliate_code: generate_affiliate_code(tx_context::sender(ctx), affiliate_config, clock, ctx),
-            is_affiliate_active: true,
-            created_at: clock::timestamp_ms(clock),
-            // Marketplace metadata
-            name: nft_name,
-            description: nft_description,
-            image_url: nft_image_url,
-            price: villa_metadata.price_per_share,
-            is_listed: false,
-            listing_price: 0,
-        };
-
-        villa_metadata.shares_issued = villa_metadata.shares_issued + 1;
-        villa_metadata.updated_at = clock::timestamp_ms(clock);
-        project.total_shares_issued = project.total_shares_issued + 1;
-        project.updated_at = clock::timestamp_ms(clock);
-
-        event::emit(VillaSharesMinted {
-            project_id: project.project_id,
-            villa_id: villa_metadata.villa_id,
-            amount: 1,
-            total_shares_issued: villa_metadata.shares_issued,
-            created_at: clock::timestamp_ms(clock),
-            // Marketplace metadata
-            nft_name: nft_name,
-            nft_description: nft_description,
-            nft_image_url: nft_image_url,
-            nft_price: villa_metadata.price_per_share,
-        });
-
-        share_nft
-    }
-
-    public fun mint_villa_shares_batch(
-        _app_cap: &AppCap,
-        project: &mut VillaProject,
-        villa_metadata: &mut VillaMetadata,
-        affiliate_config: &AffiliateConfig,
-        amount: u64,
-        nft_name: String,
-        nft_description: String,
-        nft_image_url: String,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ): vector<VillaShareNFT> {
-        assert!(amount > 0, EInvalidMaxShares);
-        assert!(villa_metadata.shares_issued + amount <= villa_metadata.max_shares, EExceedsVillaLimit);
-        assert!(project.total_shares_issued + amount <= project.max_total_shares, EExceedsProjectLimit);
-
-        let mut shares = vector::empty<VillaShareNFT>();
-
-        // Mint shares one by one
-        let mut i = 0;
-        while (i < amount) {
-            let share_nft = VillaShareNFT {
-                id: object::new(ctx),
-                project_id: project.project_id,
-                villa_id: villa_metadata.villa_id,
-                owner: tx_context::sender(ctx),
-                affiliate_code: generate_affiliate_code(tx_context::sender(ctx), affiliate_config, clock, ctx),
-                is_affiliate_active: true,
-                created_at: clock::timestamp_ms(clock),
-                // Marketplace metadata
-                name: nft_name,
-                description: nft_description,
-                image_url: nft_image_url,
-                price: villa_metadata.price_per_share,
-                is_listed: false,
-                listing_price: 0,
-            };
-            vector::push_back(&mut shares, share_nft);
-            i = i + 1;
-        };
-
-        villa_metadata.shares_issued = villa_metadata.shares_issued + amount;
-        villa_metadata.updated_at = clock::timestamp_ms(clock);
-        project.total_shares_issued = project.total_shares_issued + amount;
-        project.updated_at = clock::timestamp_ms(clock);
-
-        event::emit(VillaSharesMinted {
-            project_id: project.project_id,
-            villa_id: villa_metadata.villa_id,
-            amount,
-            total_shares_issued: villa_metadata.shares_issued,
-            created_at: clock::timestamp_ms(clock),
-            // Marketplace metadata
-            nft_name: nft_name,
-            nft_description: nft_description,
-            nft_image_url: nft_image_url,
-            nft_price: villa_metadata.price_per_share,
-        });
-
-        shares
-    }
-
-    // REMOVED: mint_villa_share_with_admin function
-    // Reason: Had owner conflict (admin became owner instead of user)
-    // Use admin_mint_for_user instead, which is more complete and secure
-
-    // REMOVED: mint_villa_shares_batch_with_admin function
-    // Reason: Had owner conflict (admin became owner instead of user)
-    // For batch minting, use multiple calls to admin_mint_for_user instead
-
-
-    // ===== Marketplace Functions =====
-
-    public fun create_marketplace(
-        _app_cap: &AppCap,
-        project_id: String,
-        commission_rate: u64,
-        affiliate_rate: u64,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ): VillaMarketplace {
-        VillaMarketplace {
-            id: object::new(ctx),
-            project_id,
-            listings: table::new(ctx),
-            trades: table::new(ctx),
-            commission_rate,
-            affiliate_rate,
-            created_at: clock::timestamp_ms(clock),
-        }
-    }
-
-    // FIXED: Properly consume share_nft by extracting data and using ID before deleting UID
-    public fun list_dnft_for_sale(
-        marketplace: &mut VillaMarketplace,
-        share_nft: &mut VillaShareNFT,
-        price: u64,
-        expires_at: u64,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ) {
-        assert!(price > 0, EInvalidPrice);
-        assert!(expires_at > clock::timestamp_ms(clock), EListingExpired);
-
-        // Update NFT status to listed (preserve original ID)
-        share_nft.is_listed = true;
-        share_nft.listing_price = price;
-
-        // Get the original ID (preserve it)
-        let share_nft_id_value = object::uid_to_inner(&share_nft.id);
-
-        let listing = DNFTListing {
-            id: object::new(ctx),
-            share_nft_id: share_nft_id_value,
-            project_id: share_nft.project_id,
-            villa_id: share_nft.villa_id,
-            seller: share_nft.owner,
-            price,
-            affiliate_code: share_nft.affiliate_code,
-            is_active: true,
-            created_at: clock::timestamp_ms(clock),
-            expires_at,
-            // Marketplace metadata
-            nft_name: share_nft.name,
-            nft_description: share_nft.description,
-            nft_image_url: share_nft.image_url,
-        };
-
-        table::add(&mut marketplace.listings, listing.share_nft_id, listing);
-
-        // DO NOT delete the original NFT - preserve ID for tracking
-        // object::delete(share_nft_id); // REMOVED
-
-        event::emit(DNFTListed {
-            share_nft_id: share_nft_id_value,
-            seller: share_nft.owner,
-            price,
-            created_at: clock::timestamp_ms(clock),
-        });
-    }
-
-    // FIXED: Properly handle listing consumption and create new share_nft
-    public fun buy_dnft_from_marketplace(
-        marketplace: &mut VillaMarketplace,
-        share_nft: &mut VillaShareNFT,
-        affiliate_config: &AffiliateConfig,
-        listing_id: ID,
-        payment: Coin<SUI>,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ): SaleCommission {
-        let listing = table::remove(&mut marketplace.listings, listing_id);
-        
-        assert!(listing.is_active, EListingNotFound);
-        assert!(clock::timestamp_ms(clock) <= listing.expires_at, EListingExpired);
-        
-        // Extract data from listing (this consumes the listing)
-        let DNFTListing {
-            id: listing_id_uid,
-            share_nft_id,
-            project_id,
-            villa_id,
-            seller,
-            price: total_price,
-            affiliate_code: _,
-            is_active: _,
-            created_at: _,
-            expires_at: _,
-            // Marketplace metadata
-            nft_name: _,
-            nft_description: _,
-            nft_image_url: _,
-        } = listing;
-        
-        let affiliate_commission = (total_price * marketplace.affiliate_rate) / 10000;
-        let app_commission = (total_price * marketplace.commission_rate) / 10000;
-        
-        let commission = SaleCommission {
-            affiliate_commission,
-            app_commission,
-            total_price,
-        };
-        
-        // Transfer payment to seller
-        sui_transfer::public_transfer(payment, seller);
-        
-        // Update existing share_nft ownership (preserve original ID)
-        share_nft.owner = tx_context::sender(ctx);
-        share_nft.affiliate_code = generate_affiliate_code(tx_context::sender(ctx), affiliate_config, clock, ctx);
-        share_nft.is_affiliate_active = true;
-        share_nft.price = total_price;
-        share_nft.is_listed = false;
-        share_nft.listing_price = 0;
-        
-        // Record trade
-        let trade = DNFTTrade {
-            id: object::new(ctx),
-            share_nft_id,
-            project_id,
-            villa_id,
-            seller,
-            buyer: tx_context::sender(ctx),
-            price: total_price,
-            affiliate_commission,
-            app_commission,
-            timestamp: clock::timestamp_ms(clock),
-        };
-        table::add(&mut marketplace.trades, share_nft_id, trade);
-        
-        // Delete the listing UID to consume it
-        object::delete(listing_id_uid);
-        
-        event::emit(DNFTBought {
-            share_nft_id: object::uid_to_inner(&share_nft.id),
-            buyer: tx_context::sender(ctx),
-            seller,
-            price: total_price,
-            affiliate_commission,
-            app_commission,
-        });
-        
-        commission
-    }
-
-    // FIXED: Properly consume listing by extracting data and deleting UID
-    public fun cancel_listing(
-        marketplace: &mut VillaMarketplace,
-        listing_id: ID,
-        _clock: &Clock,
-        ctx: &mut TxContext
-    ) {
-        let listing = table::remove(&mut marketplace.listings, listing_id);
-        
-        // Extract data from listing (this consumes the listing)
-        let DNFTListing {
-            id: listing_id_uid,
-            share_nft_id: _,
-            project_id: _,
-            villa_id: _,
-            seller,
-            price: _,
-            affiliate_code: _,
-            is_active: _,
-            created_at: _,
-            expires_at: _,
-            // Marketplace metadata
-            nft_name: _,
-            nft_description: _,
-            nft_image_url: _,
-        } = listing;
-        
-        assert!(seller == tx_context::sender(ctx), ENotAuthorized);
-        
-        // Delete the listing UID to consume it
-        object::delete(listing_id_uid);
-    }
 
     // ===== Commission and Reward System =====
 
@@ -2516,6 +1820,33 @@ module villa_rwa::villa_dnft {
         }
     }
 
+    public fun create_treasury_config(
+        _admin_cap: &AdminCap,
+        treasury_address: address,
+        clock: &Clock,
+        ctx: &mut TxContext
+    ): TreasuryConfig {
+        TreasuryConfig {
+            id: object::new(ctx),
+            treasury_address,
+            admin_address: tx_context::sender(ctx),
+            created_at: clock::timestamp_ms(clock),
+            updated_at: clock::timestamp_ms(clock),
+        }
+    }
+
+    public fun update_treasury_address(
+        _admin_cap: &AdminCap,
+        treasury_config: &mut TreasuryConfig,
+        new_treasury_address: address,
+        clock: &Clock,
+        ctx: &mut TxContext
+    ) {
+        assert!(treasury_config.admin_address == tx_context::sender(ctx), ENotAuthorized);
+        treasury_config.treasury_address = new_treasury_address;
+        treasury_config.updated_at = clock::timestamp_ms(clock);
+    }
+
     public fun create_app_treasury(
         _app_cap: &AppCap,
         project_id: String,
@@ -2531,29 +1862,6 @@ module villa_rwa::villa_dnft {
             created_at: clock::timestamp_ms(clock),
             updated_at: clock::timestamp_ms(clock),
         }
-    }
-
-    public fun distribute_commission(
-        _app_cap: &AppCap,
-        affiliate_reward: &mut AffiliateReward,
-        app_treasury: &mut AppTreasury,
-        commission: SaleCommission,
-        clock: &Clock
-    ) {
-        affiliate_reward.total_earned = affiliate_reward.total_earned + commission.affiliate_commission;
-        affiliate_reward.pending_amount = affiliate_reward.pending_amount + commission.affiliate_commission;
-        affiliate_reward.updated_at = clock::timestamp_ms(clock);
-
-        app_treasury.total_earned = app_treasury.total_earned + commission.app_commission;
-        app_treasury.pending_amount = app_treasury.pending_amount + commission.app_commission;
-        app_treasury.updated_at = clock::timestamp_ms(clock);
-
-        event::emit(AffiliateRewardEarned {
-            affiliate_code: affiliate_reward.affiliate_code,
-            owner: affiliate_reward.owner,
-            amount: commission.affiliate_commission,
-            timestamp: clock::timestamp_ms(clock),
-        });
     }
 
     public fun claim_affiliate_reward(
@@ -2597,76 +1905,20 @@ module villa_rwa::villa_dnft {
         claimable_amount
     }
 
-    // ===== Marketplace Functions =====
-
-    /// Transfer NFT to another address
-    public fun transfer(mut nft: VillaShareNFT, recipient: address, clock: &Clock, _ctx: &mut TxContext) {
-        let nft_id = object::uid_to_inner(&nft.id);
-        let from = nft.owner;
-        
-        nft.owner = recipient;
-        
-        event::emit(NFTTransferred {
-            nft_id,
-            from,
-            to: recipient,
-            timestamp: clock::timestamp_ms(clock),
-        });
-        
-        sui_transfer::public_transfer(nft, recipient);
-    }
-
-    /// List NFT for sale
-    public fun list_for_sale(nft: &mut VillaShareNFT, price: u64, clock: &Clock, ctx: &mut TxContext) {
-        assert!(nft.owner == tx_context::sender(ctx), ENotOwner);
-        assert!(!nft.is_listed, EAlreadyListed);
-        assert!(price > 0, EInvalidListingPrice);
-
-        nft.is_listed = true;
-        nft.listing_price = price;
-        nft.price = price;
-
-        event::emit(NFTListed {
-            nft_id: object::uid_to_inner(&nft.id),
-            owner: nft.owner,
-            price,
-            timestamp: clock::timestamp_ms(clock),
-        });
-    }
-
-    /// Delist NFT from sale
-    public fun delist(nft: &mut VillaShareNFT, clock: &Clock, ctx: &mut TxContext) {
-        assert!(nft.owner == tx_context::sender(ctx), ENotOwner);
-        assert!(nft.is_listed, ENotListed);
-
-        nft.is_listed = false;
-        nft.listing_price = 0;
-
-        event::emit(NFTDelisted {
-            nft_id: object::uid_to_inner(&nft.id),
-            owner: nft.owner,
-            timestamp: clock::timestamp_ms(clock),
-        });
-    }
+    // ===== NFT utility functions =====
 
     /// Update NFT price
-    public fun update_price(nft: &mut VillaShareNFT, new_price: u64, clock: &Clock, ctx: &mut TxContext) {
+    public fun update_price(nft: &mut VillaShareNFT, new_price: u64, _clock: &Clock, ctx: &mut TxContext) {
         assert!(nft.owner == tx_context::sender(ctx), ENotOwner);
-        assert!(new_price > 0, EInvalidListingPrice);
+        assert!(new_price > 0, EInvalidAmount);
 
-        let old_price = nft.price;
+        let _old_price = nft.price;
         nft.price = new_price;
         
         if (nft.is_listed) {
             nft.listing_price = new_price;
         };
 
-        event::emit(PriceUpdated {
-            nft_id: object::uid_to_inner(&nft.id),
-            old_price,
-            new_price,
-            timestamp: clock::timestamp_ms(clock),
-        });
     }
 
     /// Get NFT owner
@@ -2726,97 +1978,6 @@ module villa_rwa::villa_dnft {
     }
 
     // ===== User Executor Functions (for zkLogin signature) =====
-
-    /// User buy NFT for self (with zkLogin signature)
-    public fun user_buy_for_self(
-        marketplace: &mut VillaMarketplace,
-        affiliate_config: &AffiliateConfig,
-        listing_id: ID,
-        _user_payment: Coin<SUI>,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ): VillaShareNFT {
-        // Get listing
-        let listing = table::remove(&mut marketplace.listings, listing_id);
-        
-        assert!(listing.is_active, EListingNotFound);
-        assert!(clock::timestamp_ms(clock) <= listing.expires_at, EListingExpired);
-        
-        // Extract data from listing
-        let DNFTListing {
-            id: listing_id_uid,
-            share_nft_id,
-            project_id,
-            villa_id,
-            seller,
-            price: total_price,
-            affiliate_code: _,
-            is_active: _,
-            created_at: _,
-            expires_at: _,
-            nft_name,
-            nft_description,
-            nft_image_url,
-        } = listing;
-        
-        // Validate payment
-        assert!(coin::value(&_user_payment) >= total_price, EInsufficientPayment);
-        
-        // Calculate commissions
-        let affiliate_commission = (total_price * marketplace.affiliate_rate) / 10000;
-        let app_commission = (total_price * marketplace.commission_rate) / 10000;
-        
-        // Transfer payment to seller
-        sui_transfer::public_transfer(_user_payment, seller);
-        
-        // Create new NFT for user (who signed the transaction)
-        let buyer_address = tx_context::sender(ctx);
-        let share_nft = VillaShareNFT {
-            id: object::new(ctx),
-            project_id,
-            villa_id,
-            owner: buyer_address, // User becomes owner
-            affiliate_code: generate_affiliate_code(buyer_address, affiliate_config, clock, ctx),
-            is_affiliate_active: true,
-            created_at: clock::timestamp_ms(clock),
-            name: nft_name,
-            description: nft_description,
-            image_url: nft_image_url,
-            price: total_price,
-            is_listed: false,
-            listing_price: 0,
-        };
-        
-        // Record trade
-        let trade = DNFTTrade {
-            id: object::new(ctx),
-            share_nft_id,
-            project_id,
-            villa_id,
-            seller,
-            buyer: buyer_address,
-            price: total_price,
-            affiliate_commission,
-            app_commission,
-            timestamp: clock::timestamp_ms(clock),
-        };
-        table::add(&mut marketplace.trades, share_nft_id, trade);
-        
-        // Delete the listing UID
-        object::delete(listing_id_uid);
-        
-        // Emit event
-        event::emit(DNFTBought {
-            share_nft_id: object::uid_to_inner(&share_nft.id),
-            buyer: buyer_address,
-            seller,
-            price: total_price,
-            affiliate_commission,
-            app_commission,
-        });
-        
-        share_nft
-    }
 
     /// User deposit SUI for self (with zkLogin signature)
     public fun user_deposit_sui_for_self(
@@ -2930,108 +2091,16 @@ module villa_rwa::villa_dnft {
         withdrawn_coin
     }
 
-    /// User buy NFT with USDC for self (with zkLogin signature)
-    public fun user_buy_with_usdc_for_self(
-        marketplace: &mut VillaMarketplace,
-        affiliate_config: &AffiliateConfig,
-        listing_id: ID,
-        _user_payment: Coin<USDC>,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ): VillaShareNFT {
-        // Get listing
-        let listing = table::remove(&mut marketplace.listings, listing_id);
-        
-        assert!(listing.is_active, EListingNotFound);
-        assert!(clock::timestamp_ms(clock) <= listing.expires_at, EListingExpired);
-        
-        // Extract data from listing
-        let DNFTListing {
-            id: listing_id_uid,
-            share_nft_id,
-            project_id,
-            villa_id,
-            seller,
-            price: total_price,
-            affiliate_code: _,
-            is_active: _,
-            created_at: _,
-            expires_at: _,
-            nft_name,
-            nft_description,
-            nft_image_url,
-        } = listing;
-        
-        // Validate payment (assuming USDC and SUI have same decimal places)
-        assert!(coin::value(&_user_payment) >= total_price, EInsufficientPayment);
-        
-        // Calculate commissions
-        let affiliate_commission = (total_price * marketplace.affiliate_rate) / 10000;
-        let app_commission = (total_price * marketplace.commission_rate) / 10000;
-        
-        // Transfer payment to seller
-        sui_transfer::public_transfer(_user_payment, seller);
-        
-        // Create new NFT for user (who signed the transaction)
-        let buyer_address = tx_context::sender(ctx);
-        let share_nft = VillaShareNFT {
-            id: object::new(ctx),
-            project_id,
-            villa_id,
-            owner: buyer_address, // User becomes owner
-            affiliate_code: generate_affiliate_code(buyer_address, affiliate_config, clock, ctx),
-            is_affiliate_active: true,
-            created_at: clock::timestamp_ms(clock),
-            name: nft_name,
-            description: nft_description,
-            image_url: nft_image_url,
-            price: total_price,
-            is_listed: false,
-            listing_price: 0,
-        };
-        
-        // Record trade
-        let trade = DNFTTrade {
-            id: object::new(ctx),
-            share_nft_id,
-            project_id,
-            villa_id,
-            seller,
-            buyer: buyer_address,
-            price: total_price,
-            affiliate_commission,
-            app_commission,
-            timestamp: clock::timestamp_ms(clock),
-        };
-        table::add(&mut marketplace.trades, share_nft_id, trade);
-        
-        // Delete the listing UID
-        object::delete(listing_id_uid);
-        
-        // Emit event
-        event::emit(DNFTBought {
-            share_nft_id: object::uid_to_inner(&share_nft.id),
-            buyer: buyer_address,
-            seller,
-            price: total_price,
-            affiliate_commission,
-            app_commission,
-        });
-        
-        share_nft
-    }
-
     // ===== Utility Functions =====
 
     fun generate_affiliate_code(
         _owner: address, 
-        affiliate_config: &AffiliateConfig, 
-        clock: &Clock, 
+        _affiliate_config: &AffiliateConfig, 
+        _clock: &Clock, 
         _ctx: &mut TxContext
     ): String {
-        let timestamp = clock::timestamp_ms(clock);
-        let _random_part = timestamp % 10000;
-        affiliate_config.current_prefix
+        // On-chain affiliate disabled; return empty string for compatibility
+        string::utf8(b"")
     }
 
     public fun update_villa_metadata(
@@ -3057,8 +2126,8 @@ module villa_rwa::villa_dnft {
         clock: &Clock
     ) {
         // Validate commission rates
-        assert!(new_commission_rate <= 10000, EInvalidCommissionRate);
-        assert!(new_affiliate_rate <= 10000, EInvalidCommissionRate);
+        assert!(new_commission_rate <= 10000, EInvalidAmount);
+        assert!(new_affiliate_rate <= 10000, EInvalidAmount);
 
         // Store old values for event emission
         let old_name = project.name;
@@ -3099,10 +2168,6 @@ module villa_rwa::villa_dnft {
         (share_nft.project_id, share_nft.villa_id, share_nft.owner, share_nft.affiliate_code, share_nft.is_affiliate_active)
     }
 
-    public fun get_marketplace_info(marketplace: &VillaMarketplace): (String, u64, u64, u64) {
-        (marketplace.project_id, marketplace.commission_rate, marketplace.affiliate_rate, marketplace.created_at)
-    }
-
     public fun get_affiliate_reward_info(affiliate_reward: &AffiliateReward): (String, address, u64, u64, u64) {
         (affiliate_reward.affiliate_code, affiliate_reward.owner, affiliate_reward.total_earned, affiliate_reward.total_paid, affiliate_reward.pending_amount)
     }
@@ -3111,690 +2176,4 @@ module villa_rwa::villa_dnft {
         (app_treasury.project_id, app_treasury.total_earned, app_treasury.total_paid, app_treasury.pending_amount)
     }
 
-    // ===== Commission System Functions =====
-
-    /// Update commission rate (only by admin)
-    public fun update_commission_rate(
-        commission_config: &mut CommissionConfig,
-        new_rate: u64,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ) {
-        assert!(tx_context::sender(ctx) == commission_config.admin_address, ENotAdmin);
-        assert!(new_rate <= 10000, EInvalidCommissionRate); // Max 100%
-        
-        let old_rate = commission_config.current_commission_rate;
-        commission_config.current_commission_rate = new_rate;
-        commission_config.updated_at = clock::timestamp_ms(clock);
-
-        event::emit(CommissionConfigUpdated {
-            admin_address: tx_context::sender(ctx),
-            old_rate,
-            new_rate,
-            timestamp: clock::timestamp_ms(clock),
-        });
-    }
-
-    /// Admin update affiliate code prefix
-    public fun update_affiliate_prefix(
-        affiliate_config: &mut AffiliateConfig,
-        new_prefix: String,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ) {
-        assert!(tx_context::sender(ctx) == affiliate_config.admin_address, ENotAdmin);
-        assert!(affiliate_config.is_active, ENotAuthorized);
-        
-        let old_prefix = affiliate_config.current_prefix;
-        affiliate_config.current_prefix = new_prefix;
-        affiliate_config.updated_at = clock::timestamp_ms(clock);
-
-        event::emit(AffiliateConfigUpdated {
-            admin_address: tx_context::sender(ctx),
-            old_prefix,
-            new_prefix,
-            timestamp: clock::timestamp_ms(clock),
-        });
-    }
-
-    /// Get commission configuration info
-    public fun get_commission_config(commission_config: &CommissionConfig): (u64, u64, address, bool, u64) {
-        (
-            commission_config.default_commission_rate,
-            commission_config.current_commission_rate,
-            commission_config.admin_address,
-            commission_config.is_active,
-            commission_config.updated_at
-        )
-    }
-
-    /// Get treasury balance info
-    public fun get_treasury_balance_info(treasury_balance: &TreasuryBalance): (u64, u64, u64, u64) {
-        (
-            balance::value(&treasury_balance.sui_balance),
-            balance::value(&treasury_balance.usdc_balance),
-            treasury_balance.total_commission_earned,
-            treasury_balance.total_commission_withdrawn
-        )
-    }
-
-    /// Get affiliate configuration info
-    public fun get_affiliate_config_info(affiliate_config: &AffiliateConfig): (String, String, address, bool, u64, u64) {
-        (
-            affiliate_config.default_prefix,
-            affiliate_config.current_prefix,
-            affiliate_config.admin_address,
-            affiliate_config.is_active,
-            affiliate_config.created_at,
-            affiliate_config.updated_at
-        )
-    }
-
-    /// Check if address is exempt from commission (admin address)
-    public fun is_admin_exempt_from_commission(commission_config: &CommissionConfig, address: address): bool {
-        address == commission_config.admin_address
-    }
-
-    /// Calculate commission amount
-    public fun calculate_commission_amount(
-        commission_config: &CommissionConfig,
-        total_price: u64,
-        seller_address: address
-    ): u64 {
-        // Admin is exempt from commission
-        if (is_admin_exempt_from_commission(commission_config, seller_address)) {
-            return 0
-        };
-        
-        // Calculate commission
-        (total_price * commission_config.current_commission_rate) / 10000
-    }
-
-    /// Admin withdraw SUI from treasury
-    public fun admin_withdraw_sui_from_treasury(
-        commission_config: &CommissionConfig,
-        treasury_balance: &mut TreasuryBalance,
-        amount: u64,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ): Coin<SUI> {
-        assert!(tx_context::sender(ctx) == commission_config.admin_address, ENotAdmin);
-        assert!(balance::value(&treasury_balance.sui_balance) >= amount, EInsufficientTreasuryBalance);
-
-        let withdrawn_balance = balance::split(&mut treasury_balance.sui_balance, amount);
-        let withdrawn_coin = coin::from_balance(withdrawn_balance, ctx);
-        
-        treasury_balance.total_commission_withdrawn = treasury_balance.total_commission_withdrawn + amount;
-        treasury_balance.updated_at = clock::timestamp_ms(clock);
-
-        event::emit(CommissionWithdrawn {
-            admin_address: tx_context::sender(ctx),
-            amount,
-            token_type: string::utf8(b"SUI"),
-            timestamp: clock::timestamp_ms(clock),
-        });
-
-        withdrawn_coin
-    }
-
-    /// Admin withdraw USDC from treasury
-    public fun admin_withdraw_usdc_from_treasury(
-        commission_config: &CommissionConfig,
-        treasury_balance: &mut TreasuryBalance,
-        amount: u64,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ): Coin<USDC> {
-        assert!(tx_context::sender(ctx) == commission_config.admin_address, ENotAdmin);
-        assert!(balance::value(&treasury_balance.usdc_balance) >= amount, EInsufficientTreasuryBalance);
-
-        let withdrawn_balance = balance::split(&mut treasury_balance.usdc_balance, amount);
-        let withdrawn_coin = coin::from_balance(withdrawn_balance, ctx);
-        
-        treasury_balance.total_commission_withdrawn = treasury_balance.total_commission_withdrawn + amount;
-        treasury_balance.updated_at = clock::timestamp_ms(clock);
-
-        event::emit(CommissionWithdrawn {
-            admin_address: tx_context::sender(ctx),
-            amount,
-            token_type: string::utf8(b"USDC"),
-            timestamp: clock::timestamp_ms(clock),
-        });
-
-        withdrawn_coin
-    }
-
-    /// Process commission payment (internal function)
-    public fun process_commission_payment(
-        commission_config: &mut CommissionConfig,
-        treasury_balance: &mut TreasuryBalance,
-        payment: &mut Coin<SUI>,
-        seller_address: address,
-        buyer_address: address,
-        total_price: u64,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ): Coin<SUI> {
-        let commission_amount = calculate_commission_amount(commission_config, total_price, seller_address);
-        
-        if (commission_amount == 0) {
-            // No commission, return full payment to seller
-            let seller_payment = coin::split(payment, total_price, ctx);
-            return seller_payment
-        };
-
-        // Calculate seller payment (after commission deduction)
-        let seller_received = total_price - commission_amount;
-        
-        // Split payment: commission to treasury, rest to seller
-        let commission_payment = coin::split(payment, commission_amount, ctx);
-        let seller_payment = coin::split(payment, seller_received, ctx);
-        
-        // Add commission to treasury
-        let commission_balance = coin::into_balance(commission_payment);
-        balance::join(&mut treasury_balance.sui_balance, commission_balance);
-        
-        treasury_balance.total_commission_earned = treasury_balance.total_commission_earned + commission_amount;
-        treasury_balance.updated_at = clock::timestamp_ms(clock);
-
-        // Emit commission collected event
-        event::emit(CommissionCollected {
-            seller_address,
-            buyer_address,
-            total_price,
-            commission_amount,
-            seller_received,
-            timestamp: clock::timestamp_ms(clock),
-        });
-
-        // Emit treasury balance updated event
-        event::emit(TreasuryBalanceUpdated {
-            sui_balance: balance::value(&treasury_balance.sui_balance),
-            usdc_balance: balance::value(&treasury_balance.usdc_balance),
-            total_earned: treasury_balance.total_commission_earned,
-            timestamp: clock::timestamp_ms(clock),
-        });
-
-        seller_payment
-    }
-
-    /// Process USDC commission payment (internal function)
-    public fun process_usdc_commission_payment(
-        commission_config: &mut CommissionConfig,
-        treasury_balance: &mut TreasuryBalance,
-        payment: &mut Coin<USDC>,
-        seller_address: address,
-        buyer_address: address,
-        total_price: u64,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ): Coin<USDC> {
-        let commission_amount = calculate_commission_amount(commission_config, total_price, seller_address);
-        
-        if (commission_amount == 0) {
-            // No commission, return full payment to seller
-            let seller_payment = coin::split(payment, total_price, ctx);
-            return seller_payment
-        };
-
-        // Calculate seller payment (after commission deduction)
-        let seller_received = total_price - commission_amount;
-        
-        // Split payment: commission to treasury, rest to seller
-        let commission_payment = coin::split(payment, commission_amount, ctx);
-        let seller_payment = coin::split(payment, seller_received, ctx);
-        
-        // Add commission to treasury
-        let commission_balance = coin::into_balance(commission_payment);
-        balance::join(&mut treasury_balance.usdc_balance, commission_balance);
-        
-        treasury_balance.total_commission_earned = treasury_balance.total_commission_earned + commission_amount;
-        treasury_balance.updated_at = clock::timestamp_ms(clock);
-
-        // Emit commission collected event
-        event::emit(CommissionCollected {
-            seller_address,
-            buyer_address,
-            total_price,
-            commission_amount,
-            seller_received,
-            timestamp: clock::timestamp_ms(clock),
-        });
-
-        // Emit treasury balance updated event
-        event::emit(TreasuryBalanceUpdated {
-            sui_balance: balance::value(&treasury_balance.sui_balance),
-            usdc_balance: balance::value(&treasury_balance.usdc_balance),
-            total_earned: treasury_balance.total_commission_earned,
-            timestamp: clock::timestamp_ms(clock),
-        });
-
-        seller_payment
-    }
-
-    // ===== Batch Escrow Configuration Functions =====
-
-    /// Create batch escrow configuration
-    public fun create_batch_escrow_config(
-        super_admin_registry: &mut SuperAdminRegistry,
-        max_batch_size: u64,
-        default_expiry_hours: u64,
-        default_affiliate_active: bool,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ): BatchEscrowConfig {
-        
-        // Validate admin permissions
-        let admin_address = tx_context::sender(ctx);
-        assert!(table::contains(&super_admin_registry.admins, admin_address), ENotAdmin);
-        
-        let admin_info = table::borrow(&super_admin_registry.admins, admin_address);
-        assert!(admin_info.is_active, ENotAdmin);
-        
-        // Validate configuration values
-        assert!(max_batch_size > 0, EInvalidAmount);
-        assert!(default_expiry_hours > 0, EInvalidAmount);
-        
-        BatchEscrowConfig {
-            id: object::new(ctx),
-            max_batch_size: max_batch_size,
-            default_expiry_hours: default_expiry_hours,
-            default_affiliate_active: default_affiliate_active,
-            created_at: clock::timestamp_ms(clock),
-            updated_at: clock::timestamp_ms(clock),
-        }
-    }
-
-    /// Update batch escrow configuration
-    public fun update_batch_escrow_config(
-        super_admin_registry: &mut SuperAdminRegistry,
-        config: &mut BatchEscrowConfig,
-        max_batch_size: u64,
-        default_expiry_hours: u64,
-        default_affiliate_active: bool,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ) {
-        
-        // Validate admin permissions
-        let admin_address = tx_context::sender(ctx);
-        assert!(table::contains(&super_admin_registry.admins, admin_address), ENotAdmin);
-        
-        let admin_info = table::borrow(&super_admin_registry.admins, admin_address);
-        assert!(admin_info.is_active, ENotAdmin);
-        
-        // Validate configuration values
-        assert!(max_batch_size > 0, EInvalidAmount);
-        assert!(default_expiry_hours > 0, EInvalidAmount);
-        
-        // Update configuration
-        config.max_batch_size = max_batch_size;
-        config.default_expiry_hours = default_expiry_hours;
-        config.default_affiliate_active = default_affiliate_active;
-        config.updated_at = clock::timestamp_ms(clock);
-        
-        // Emit event
-        event::emit(BatchEscrowConfigUpdated {
-            admin_address: admin_address,
-            max_batch_size: max_batch_size,
-            default_expiry_hours: default_expiry_hours,
-            default_affiliate_active: default_affiliate_active,
-            timestamp: clock::timestamp_ms(clock),
-        });
-    }
-
-    // ===== Batch Escrow Functions =====
-
-    // Create batch escrow with USDC payment for atomic batch minting
-    #[allow(lint(self_transfer))]
-    public fun create_batch_escrow_with_payment(
-        super_admin_registry: &mut SuperAdminRegistry,
-        batch_escrow_config: &BatchEscrowConfig,
-        user_address: address,
-        project: &mut VillaProject,
-        villa_metadata: &mut VillaMetadata,
-        nft_count: u64,
-        user_payment: Coin<USDC>,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ): BatchEscrow<USDC> {
-        
-        // ===== VALIDATE ADMIN PERMISSIONS =====
-        let admin_address = tx_context::sender(ctx);
-        assert!(table::contains(&super_admin_registry.admins, admin_address), ENotAdmin);
-        
-        let admin_info = table::borrow(&super_admin_registry.admins, admin_address);
-        assert!(admin_info.is_active, ENotAdmin);
-        
-        // Validate permission
-        let mut has_permission = false;
-        let mut i = 0;
-        let len = vector::length(&admin_info.permissions);
-        while (i < len) {
-            if (vector::borrow(&admin_info.permissions, i) == &string::utf8(b"ADMIN_MINT_FOR_USER")) {
-                has_permission = true;
-                break
-            };
-            i = i + 1;
-        };
-        assert!(has_permission, EPermissionDenied);
-        
-        // ===== VALIDATE MINTING CONSTRAINTS =====
-        assert!(nft_count > 0, EInvalidAmount);
-        assert!(nft_count <= batch_escrow_config.max_batch_size, EExceedsBatchLimit);
-        
-        // Validate remaining villa shares
-        let remaining_villa_shares = villa_metadata.max_shares - villa_metadata.shares_issued;
-        assert!(nft_count <= remaining_villa_shares, EExceedsVillaLimit);
-        
-        // Validate remaining project shares
-        let remaining_project_shares = project.max_total_shares - project.total_shares_issued;
-        assert!(nft_count <= remaining_project_shares, EExceedsProjectLimit);
-        
-        // ===== VALIDATE PAYMENT =====
-        let price_per_share = villa_metadata.price_per_share;
-        let total_price = price_per_share * nft_count;
-        
-        // Validate payment amount
-        assert!(coin::value(&user_payment) >= total_price, EInsufficientPayment);
-        
-        // ===== CREATE BATCH ESCROW =====
-        let expires_at = clock::timestamp_ms(clock) + (batch_escrow_config.default_expiry_hours * 3600000); // Convert hours to milliseconds
-        
-        // Create batch escrow without storing payment
-        let total_amount = coin::value(&user_payment);
-        let batch_escrow = BatchEscrow<USDC> {
-            id: object::new(ctx),
-            buyer: user_address,
-            platform: admin_address,
-            total_amount: total_amount,
-            nft_count: nft_count,
-            nft_ids: vector::empty<ID>(),
-            project_id: project.project_id,
-            villa_id: villa_metadata.villa_id,
-            created_at: clock::timestamp_ms(clock),
-            expires_at: expires_at,
-            status: BATCH_ESCROW_PENDING,
-            successful_nfts: 0,
-            failed_nfts: 0,
-            processed_amount: 0,
-            refund_amount: 0,
-        };
-        
-        // Transfer payment to platform treasury immediately (like existing buy functions)
-        sui_transfer::public_transfer(user_payment, admin_address);
-        
-        // ===== EMIT EVENT =====
-        event::emit(BatchEscrowCreated {
-            escrow_id: object::uid_to_inner(&batch_escrow.id),
-            buyer: user_address,
-            platform: admin_address,
-            total_amount: total_amount,
-            nft_count: nft_count,
-            project_id: project.project_id,
-            villa_id: villa_metadata.villa_id,
-            expires_at: expires_at,
-            timestamp: clock::timestamp_ms(clock),
-        });
-        
-        // ===== RETURN ESCROW =====
-        batch_escrow
-    }
-
-    /// Admin perform batch minting with existing escrow
-    public fun admin_batch_mint_with_escrow(
-        super_admin_registry: &mut SuperAdminRegistry,
-        batch_escrow: &mut BatchEscrow<USDC>,
-        batch_escrow_config: &BatchEscrowConfig,
-        project: &mut VillaProject,
-        villa_metadata: &mut VillaMetadata,
-        affiliate_config: &AffiliateConfig,
-        nft_name: String,
-        nft_description: String,
-        nft_image_url: String,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ): vector<VillaShareNFT> {
-        
-        // ===== VALIDATE ADMIN PERMISSIONS =====
-        let admin_address = tx_context::sender(ctx);
-        assert!(table::contains(&super_admin_registry.admins, admin_address), ENotAdmin);
-        
-        let admin_info = table::borrow(&super_admin_registry.admins, admin_address);
-        assert!(admin_info.is_active, ENotAdmin);
-        
-        // ===== VALIDATE ESCROW =====
-        assert!(batch_escrow.status == BATCH_ESCROW_PENDING, EInvalidEscrowStatus);
-        assert!(clock::timestamp_ms(clock) <= batch_escrow.expires_at, EEscrowExpired);
-        
-        // ===== UPDATE STATUS TO PROCESSING =====
-        batch_escrow.status = BATCH_ESCROW_PROCESSING;
-        
-        // ===== BATCH MINTING =====
-        let mut nft_list = vector::empty<VillaShareNFT>();
-        let mut nft_id_list = vector::empty<ID>();
-        let mut successful_count = 0;
-        let failed_count = 0;
-        
-        let price_per_share = villa_metadata.price_per_share;
-        
-        let mut i = 0;
-        while (i < batch_escrow.nft_count) {
-            // Create NFT for user
-            let share_nft = VillaShareNFT {
-                id: object::new(ctx),
-                project_id: project.project_id,
-                villa_id: villa_metadata.villa_id,
-                owner: batch_escrow.buyer,
-                affiliate_code: generate_affiliate_code(batch_escrow.buyer, affiliate_config, clock, ctx),
-                is_affiliate_active: batch_escrow_config.default_affiliate_active,
-                created_at: clock::timestamp_ms(clock),
-                name: nft_name,
-                description: nft_description,
-                image_url: nft_image_url,
-                price: price_per_share,
-                is_listed: true,  // Set true for ownership tracking
-                listing_price: price_per_share,
-            };
-            
-            // Add NFT to list
-            vector::push_back(&mut nft_list, share_nft);
-            
-            // Add NFT ID to list
-            vector::push_back(&mut nft_id_list, object::uid_to_inner(&vector::borrow(&nft_list, i).id));
-            
-            successful_count = successful_count + 1;
-            
-            i = i + 1;
-        };
-        
-        // ===== UPDATE ESCROW =====
-        batch_escrow.nft_ids = nft_id_list;
-        batch_escrow.successful_nfts = successful_count;
-        batch_escrow.failed_nfts = failed_count;
-        
-        // ===== CALCULATE PAYMENTS =====
-        let processed_amount = price_per_share * successful_count;
-        let refund_amount = batch_escrow.total_amount - processed_amount;
-        
-        batch_escrow.processed_amount = processed_amount;
-        batch_escrow.refund_amount = refund_amount;
-        
-        // ===== UPDATE METADATA =====
-        villa_metadata.shares_issued = villa_metadata.shares_issued + successful_count;
-        project.total_shares_issued = project.total_shares_issued + successful_count;
-        
-        // ===== DETERMINE FINAL STATUS =====
-        if (successful_count == batch_escrow.nft_count) {
-            batch_escrow.status = BATCH_ESCROW_COMPLETED;
-        } else if (successful_count > 0) {
-            batch_escrow.status = BATCH_ESCROW_PARTIAL;
-        } else {
-            batch_escrow.status = BATCH_ESCROW_FAILED;
-        };
-        
-        // ===== EMIT EVENTS =====
-        // Emit event for each successful NFT
-        let mut i = 0;
-        while (i < successful_count) {
-            event::emit(VillaSharesMinted {
-                project_id: project.project_id,
-                villa_id: villa_metadata.villa_id,
-                amount: 1,
-                total_shares_issued: villa_metadata.shares_issued,
-                created_at: clock::timestamp_ms(clock),
-                nft_name: nft_name,
-                nft_description: nft_description,
-                nft_image_url: nft_image_url,
-                nft_price: price_per_share,
-            });
-            i = i + 1;
-        };
-        
-        // Emit batch minting completed event
-        event::emit(BatchMintingCompleted {
-            escrow_id: object::uid_to_inner(&batch_escrow.id),
-            buyer: batch_escrow.buyer,
-            platform: admin_address,
-            total_nfts: batch_escrow.nft_count,
-            successful_nfts: successful_count,
-            failed_nfts: failed_count,
-            processed_amount: processed_amount,
-            refund_amount: refund_amount,
-            timestamp: clock::timestamp_ms(clock),
-        });
-        
-        // ===== RETURN NFT LIST =====
-        nft_list
-    }
-
-    /// Process batch escrow payment and refund
-    public fun process_batch_escrow_payment(
-        batch_escrow: &mut BatchEscrow<USDC>,
-        commission_config: &mut CommissionConfig,
-        treasury_balance: &mut TreasuryBalance,
-        clock: &Clock,
-        _ctx: &mut TxContext
-    ) {
-        
-        // ===== VALIDATE STATUS =====
-        assert!(batch_escrow.status == BATCH_ESCROW_COMPLETED || 
-                batch_escrow.status == BATCH_ESCROW_PARTIAL || 
-                batch_escrow.status == BATCH_ESCROW_FAILED, EInvalidEscrowStatus);
-        
-        // ===== PROCESS PAYMENT FOR SUCCESSFUL NFTS =====
-        if (batch_escrow.processed_amount > 0) {
-            // Calculate platform commission
-            let commission_rate = commission_config.current_commission_rate;
-            let commission_amount = (batch_escrow.processed_amount * commission_rate) / 10000;
-            
-            // Update treasury commission earned
-            treasury_balance.total_commission_earned = treasury_balance.total_commission_earned + commission_amount;
-        };
-        
-        // ===== REFUND FOR FAILED NFTS =====
-        // Note: Refund will be handled by platform treasury
-        // This function only updates the escrow status and emits events
-        
-        // ===== EMIT EVENTS =====
-        event::emit(BatchEscrowProcessed {
-            escrow_id: object::uid_to_inner(&batch_escrow.id),
-            buyer: batch_escrow.buyer,
-            platform: batch_escrow.platform,
-            processed_amount: batch_escrow.processed_amount,
-            refund_amount: batch_escrow.refund_amount,
-            successful_nfts: batch_escrow.successful_nfts,
-            failed_nfts: batch_escrow.failed_nfts,
-            timestamp: clock::timestamp_ms(clock),
-        });
-    }
-
-    /// Admin cancel batch escrow and refund all funds
-    public fun admin_cancel_batch_escrow(
-        super_admin_registry: &mut SuperAdminRegistry,
-        batch_escrow: &mut BatchEscrow<USDC>,
-        cancel_reason: u8,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ) {
-        
-        // ===== VALIDATE ADMIN PERMISSIONS =====
-        let admin_address = tx_context::sender(ctx);
-        assert!(table::contains(&super_admin_registry.admins, admin_address), ENotAdmin);
-        
-        // ===== VALIDATE STATUS =====
-        assert!(batch_escrow.status == BATCH_ESCROW_PENDING || 
-                batch_escrow.status == BATCH_ESCROW_PROCESSING, EInvalidEscrowStatus);
-        
-        // ===== VALIDATE CANCEL REASON =====
-        assert!(cancel_reason >= 1 && cancel_reason <= 5, EInvalidCancelReason);
-        
-        // ===== REFUND ALL FUNDS =====
-        // Note: Refund will be handled by platform treasury
-        // This function only updates the escrow status and emits events
-        
-        // ===== UPDATE STATUS =====
-        batch_escrow.status = BATCH_ESCROW_CANCELLED;
-        
-        // ===== EMIT EVENT =====
-        event::emit(BatchEscrowCancelled {
-            escrow_id: object::uid_to_inner(&batch_escrow.id),
-            buyer: batch_escrow.buyer,
-            platform: admin_address,
-            total_amount: batch_escrow.total_amount,
-            nft_count: batch_escrow.nft_count,
-            cancel_reason: cancel_reason,
-            timestamp: clock::timestamp_ms(clock),
-        });
-    }
-
-    // ===== Batch Escrow Helper Functions =====
-
-    /// Get batch escrow configuration details
-    public fun get_batch_escrow_config_details(config: &BatchEscrowConfig): (u64, u64, bool) {
-        (config.max_batch_size, config.default_expiry_hours, config.default_affiliate_active)
-    }
-
-    /// Get batch escrow status
-    public fun get_batch_escrow_status(batch_escrow: &BatchEscrow<USDC>): u8 {
-        batch_escrow.status
-    }
-
-    /// Check if batch escrow is expired
-    public fun is_batch_escrow_expired(batch_escrow: &BatchEscrow<USDC>, clock: &Clock): bool {
-        clock::timestamp_ms(clock) > batch_escrow.expires_at
-    }
-
-    /// Get batch escrow details
-    public fun get_batch_escrow_details(batch_escrow: &BatchEscrow<USDC>): (address, address, u64, u64, u8) {
-        (batch_escrow.buyer, batch_escrow.platform, batch_escrow.total_amount, batch_escrow.nft_count, batch_escrow.status)
-    }
-
-    /// Cleanup completed batch escrow
-    public fun cleanup_batch_escrow(batch_escrow: BatchEscrow<USDC>) {
-        // Validate escrow is completed or cancelled
-        assert!(batch_escrow.status == BATCH_ESCROW_COMPLETED || 
-                batch_escrow.status == BATCH_ESCROW_CANCELLED, EInvalidBatchEscrowStatus);
-        
-        // Delete escrow object
-        let BatchEscrow<USDC> {
-            id,
-            buyer: _,
-            platform: _,
-            total_amount: _,
-            nft_count: _,
-            nft_ids: _,
-            project_id: _,
-            villa_id: _,
-            created_at: _,
-            expires_at: _,
-            status: _,
-            successful_nfts: _,
-            failed_nfts: _,
-            processed_amount: _,
-            refund_amount: _,
-        } = batch_escrow;
-        
-        object::delete(id);
-    }
 }
